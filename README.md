@@ -14,4 +14,12 @@ Have fun!
 |---|---|---|
 | Proxmox Task Scheduler | Create and manage scheduled systemd tasks using interactive menus | [View directions](docs/proxmox-task-scheduler.md) |
 
+---
+
+### Proxmox Health Check
+
+Perform a read-only health assessment of a Proxmox host, including storage utilization, package updates, SMART drive health, failed systemd services, network connectivity, DNS resolution, and an overall health summary.
+
+**Documentation:** [Proxmox Health Check](docs/proxmox-health-check.md)
+
 > Review scripts before running them. Use at your own risk.
