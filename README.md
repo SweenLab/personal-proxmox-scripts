@@ -8,6 +8,10 @@ I've decided to share them publicly so other homelab users can inspect, modify, 
 
 Have fun!
 
+<a href="https://buymeacoffee.com/sweenlab" target="_blank">
+  <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" width="200">
+</a>
+
 ## Scripts
 
 | Script | Purpose | Directions |
