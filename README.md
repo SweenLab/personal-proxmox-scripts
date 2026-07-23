@@ -2,7 +2,11 @@
 
 Hi, I’m Sween. I’m building and learning through my personal homelab, Sween Lab.
 
-This repository contains scripts I create to simplify Proxmox and Linux administration. They are shared publicly so other homelab users can inspect, modify, and use them.
+This repository contains scripts I created to simplify my experience with Proxmox and Linux administration. I'm very much someone who learns by doing (steps, clicking around, etc.) so it's less confusing and I am sure there are other people out there like that! 
+
+I've decided to share them publicly so other homelab users can inspect, modify, and use them.
+
+Have fun!
 
 ## Scripts
 
