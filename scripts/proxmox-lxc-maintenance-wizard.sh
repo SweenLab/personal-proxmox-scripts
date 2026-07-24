@@ -33,13 +33,17 @@ set -uo pipefail
 # Script configuration
 ###############################################################################
 
-SCRIPT_VERSION="1.1.0"
+SCRIPT_VERSION="1.1.1"
 
 JOURNAL_RETENTION="14d"
 START_TIMEOUT_SECONDS=60
 SHUTDOWN_TIMEOUT_SECONDS=60
 
 TARGET_MODE=""
+
+DIALOG_HEIGHT=20
+DIALOG_WIDTH=70
+LIST_HEIGHT=10
 
 declare -a ALL_LXC_IDS=()
 declare -a RUNNING_LXC_IDS=()
@@ -71,8 +75,8 @@ TOTAL_SKIPPED=0
 #
 #   curl -fsSL URL | bash
 #
-# Without this, piping the script into Bash can consume the same standard input
-# that the interactive menus need.
+# Without this, Bash may consume the same standard input that the interactive
+# menus need.
 
 if [[ ! -t 0 ]] && [[ -r /dev/tty ]]; then
     exec </dev/tty
@@ -83,12 +87,12 @@ fi
 ###############################################################################
 
 if [[ -t 1 ]] && command -v tput >/dev/null 2>&1; then
-    RESET="$(tput sgr0)"
-    BOLD="$(tput bold)"
-    RED="$(tput setaf 1)"
-    GREEN="$(tput setaf 2)"
-    YELLOW="$(tput setaf 3)"
-    CYAN="$(tput setaf 6)"
+    RESET="$(tput sgr0 2>/dev/null || true)"
+    BOLD="$(tput bold 2>/dev/null || true)"
+    RED="$(tput setaf 1 2>/dev/null || true)"
+    GREEN="$(tput setaf 2 2>/dev/null || true)"
+    YELLOW="$(tput setaf 3 2>/dev/null || true)"
+    CYAN="$(tput setaf 6 2>/dev/null || true)"
 else
     RESET=""
     BOLD=""
@@ -109,15 +113,19 @@ command_exists() {
 print_header() {
     clear 2>/dev/null || true
 
-    printf '%s\n' "${CYAN}============================================================${RESET}"
-    printf '%s\n' "${BOLD}       Proxmox Host & LXC Maintenance Wizard${RESET}"
-    printf '%s\n' "${CYAN}============================================================${RESET}"
+    printf '%s\n' \
+        "${CYAN}============================================================${RESET}"
+    printf '%s\n' \
+        "${BOLD}       Proxmox Host & LXC Maintenance Wizard${RESET}"
+    printf '%s\n' \
+        "${CYAN}============================================================${RESET}"
     printf 'Version: %s\n\n' "$SCRIPT_VERSION"
 }
 
 print_section() {
     printf '\n%s\n' "${BOLD}$1${RESET}"
-    printf '%s\n\n' "------------------------------------------------------------"
+    printf '%s\n\n' \
+        "------------------------------------------------------------"
 }
 
 print_info() {
@@ -134,6 +142,31 @@ print_warning() {
 
 print_error() {
     printf '%s\n' "${RED}[ERROR]${RESET} $*" >&2
+}
+
+plain_yes_no() {
+    local prompt="$1"
+    local response
+
+    printf '%s [y/N]: ' "$prompt"
+    read -r response
+
+    [[ "$response" =~ ^[Yy]$ ]]
+}
+
+array_contains() {
+    local wanted="$1"
+    shift
+
+    local value
+
+    for value in "$@"; do
+        if [[ "$value" == "$wanted" ]]; then
+            return 0
+        fi
+    done
+
+    return 1
 }
 
 format_bytes() {
@@ -156,19 +189,62 @@ format_bytes() {
     fi
 }
 
-array_contains() {
-    local wanted="$1"
-    shift
+###############################################################################
+# Responsive dialog sizing
+###############################################################################
 
-    local value
+calculate_dialog_size() {
+    local terminal_rows=24
+    local terminal_cols=80
 
-    for value in "$@"; do
-        if [[ "$value" == "$wanted" ]]; then
-            return 0
-        fi
-    done
+    if command_exists tput; then
+        terminal_rows="$(tput lines 2>/dev/null || printf '24')"
+        terminal_cols="$(tput cols 2>/dev/null || printf '80')"
+    fi
 
-    return 1
+    [[ "$terminal_rows" =~ ^[0-9]+$ ]] || terminal_rows=24
+    [[ "$terminal_cols" =~ ^[0-9]+$ ]] || terminal_cols=80
+
+    if (( terminal_rows < 18 || terminal_cols < 58 )); then
+        clear 2>/dev/null || true
+
+        print_warning \
+            "Your terminal window is too small for the interactive menus."
+
+        printf '\nCurrent terminal size: %s rows by %s columns\n' \
+            "$terminal_rows" \
+            "$terminal_cols"
+
+        printf 'Recommended minimum: 18 rows by 58 columns\n\n'
+        printf 'Enlarge the Terminal window and run the script again.\n'
+
+        exit 1
+    fi
+
+    DIALOG_HEIGHT=$((terminal_rows - 4))
+    DIALOG_WIDTH=$((terminal_cols - 4))
+
+    if (( DIALOG_HEIGHT > 28 )); then
+        DIALOG_HEIGHT=28
+    fi
+
+    if (( DIALOG_WIDTH > 88 )); then
+        DIALOG_WIDTH=88
+    fi
+
+    if (( DIALOG_HEIGHT < 18 )); then
+        DIALOG_HEIGHT=18
+    fi
+
+    if (( DIALOG_WIDTH < 58 )); then
+        DIALOG_WIDTH=58
+    fi
+
+    LIST_HEIGHT=$((DIALOG_HEIGHT - 9))
+
+    if (( LIST_HEIGHT < 6 )); then
+        LIST_HEIGHT=6
+    fi
 }
 
 ###############################################################################
@@ -178,8 +254,10 @@ array_contains() {
 require_root() {
     if [[ "${EUID}" -ne 0 ]]; then
         print_error "This script must be run as root."
+
         printf '\nRun it with:\n\n'
         printf '  sudo bash %s\n\n' "$0"
+
         exit 1
     fi
 }
@@ -188,18 +266,9 @@ verify_proxmox() {
     if ! command_exists pct || [[ ! -d /etc/pve ]]; then
         print_error "This does not appear to be a Proxmox VE host."
         print_error "The pct command or /etc/pve directory could not be found."
+
         exit 1
     fi
-}
-
-plain_yes_no() {
-    local prompt="$1"
-    local response
-
-    printf '%s [y/N]: ' "$prompt"
-    read -r response
-
-    [[ "$response" =~ ^[Yy]$ ]]
 }
 
 ensure_whiptail() {
@@ -208,7 +277,10 @@ ensure_whiptail() {
     fi
 
     print_header
-    print_warning "The whiptail package is required for checkbox menus."
+
+    print_warning \
+        "The whiptail package is required for interactive checkbox menus."
+
     printf '\n'
 
     if ! plain_yes_no "Install whiptail now?"; then
@@ -229,6 +301,7 @@ ensure_whiptail() {
     fi
 
     print_success "whiptail was installed."
+
     sleep 1
 }
 
@@ -312,37 +385,41 @@ is_supported_os() {
 
 choose_target() {
     local result
+    local exit_status
+
+    calculate_dialog_size
 
     result="$(
         whiptail \
             --title "Proxmox Maintenance Wizard" \
             --menu \
             "Choose where maintenance should be performed." \
-            17 72 4 \
+            "$DIALOG_HEIGHT" \
+            "$DIALOG_WIDTH" \
+            3 \
             "host" "Maintain the Proxmox host" \
             "lxc"  "Maintain one or more LXC containers" \
             "exit" "Exit without making changes" \
             3>&1 1>&2 2>&3
     )"
 
-    case "$?" in
-        0)
-            TARGET_MODE="$result"
-            ;;
-        *)
-            TARGET_MODE="exit"
-            ;;
-    esac
+    exit_status=$?
+
+    if (( exit_status != 0 )); then
+        TARGET_MODE="exit"
+    else
+        TARGET_MODE="$result"
+    fi
 
     if [[ "$TARGET_MODE" == "exit" ]]; then
-        clear
+        clear 2>/dev/null || true
         printf 'No changes were made.\n'
         exit 0
     fi
 }
 
 ###############################################################################
-# LXC discovery and selection
+# LXC discovery
 ###############################################################################
 
 discover_lxcs() {
@@ -393,15 +470,21 @@ discover_lxcs() {
     )
 }
 
+###############################################################################
+# LXC selection
+###############################################################################
+
 select_lxcs() {
     discover_lxcs
+    calculate_dialog_size
 
     if (( ${#ALL_LXC_IDS[@]} == 0 )); then
         whiptail \
             --title "No LXC Containers Found" \
             --msgbox \
             "No locally managed LXC containers were detected on this node." \
-            10 64
+            10 \
+            "$DIALOG_WIDTH"
 
         exit 0
     fi
@@ -411,64 +494,78 @@ select_lxcs() {
     local -A selected_map=()
 
     local vmid
-    local result
+    local output
+    local exit_status
     local tag
     local description
+    local default_state
 
     checklist_items+=(
         "__ALL_RUNNING__"
-        "Select every running LXC container"
+        "Select all running containers"
         "OFF"
     )
 
     checklist_items+=(
         "__ALL__"
-        "Select every LXC container, including stopped containers"
+        "Select all containers"
         "OFF"
     )
 
     for vmid in "${ALL_LXC_IDS[@]}"; do
-        description="$(
-            printf '%-28s  Status: %s' \
-                "${LXC_NAME[$vmid]}" \
-                "${LXC_STATUS[$vmid]}"
-        )"
+        if [[ "${LXC_STATUS[$vmid]}" == "running" ]]; then
+            default_state="ON"
+        else
+            default_state="OFF"
+        fi
+
+        description="${LXC_NAME[$vmid]} [${LXC_STATUS[$vmid]}]"
 
         checklist_items+=(
             "$vmid"
             "$description"
-            "OFF"
+            "$default_state"
         )
     done
 
     while true; do
-        result="$(
+        calculate_dialog_size
+
+        output="$(
             whiptail \
                 --title "Select LXC Containers" \
                 --checklist \
-                "Use the arrow keys to move. Press Space to select or deselect. Press Enter when finished." \
-                26 92 16 \
+                "Arrow keys: move   Space: check/uncheck   Enter: continue" \
+                "$DIALOG_HEIGHT" \
+                "$DIALOG_WIDTH" \
+                "$LIST_HEIGHT" \
                 "${checklist_items[@]}" \
+                --separate-output \
                 3>&1 1>&2 2>&3
         )"
 
-        if [[ $? -ne 0 ]]; then
-            clear
+        exit_status=$?
+
+        if (( exit_status != 0 )); then
+            clear 2>/dev/null || true
             printf 'No changes were made.\n'
             exit 0
         fi
 
         chosen=()
 
-        # The choices are generated from controlled tags, not arbitrary input.
-        eval "chosen=($result)"
+        while IFS= read -r tag; do
+            [[ -n "$tag" ]] && chosen+=("$tag")
+        done <<< "$output"
 
         if (( ${#chosen[@]} == 0 )); then
             whiptail \
                 --title "Nothing Selected" \
                 --msgbox \
                 "Select at least one LXC container." \
-                9 52
+                9 \
+                "$DIALOG_WIDTH"
+
             continue
         fi
 
@@ -481,11 +578,13 @@ select_lxcs() {
                         selected_map["$vmid"]=1
                     done
                     ;;
+
                 __ALL_RUNNING__)
                     for vmid in "${RUNNING_LXC_IDS[@]}"; do
                         selected_map["$vmid"]=1
                     done
                     ;;
+
                 *)
                     if array_contains "$tag" "${ALL_LXC_IDS[@]}"; then
                         selected_map["$tag"]=1
@@ -507,7 +606,9 @@ select_lxcs() {
                 --title "Nothing Selected" \
                 --msgbox \
                 "No matching LXC containers were selected." \
-                9 58
+                9 \
+                "$DIALOG_WIDTH"
+
             continue
         fi
 
@@ -522,6 +623,7 @@ select_lxcs() {
 configure_stopped_lxcs() {
     local vmid
     local result
+    local exit_status
     local message
 
     for vmid in "${SELECTED_LXC_IDS[@]}"; do
@@ -530,8 +632,10 @@ configure_stopped_lxcs() {
             continue
         fi
 
+        calculate_dialog_size
+
         message="$(
-            printf 'LXC %s (%s) is currently stopped.\n\nChoose how it should be handled.' \
+            printf 'LXC %s (%s) is stopped.\n\nChoose how it should be handled.' \
                 "$vmid" \
                 "${LXC_NAME[$vmid]}"
         )"
@@ -542,17 +646,21 @@ configure_stopped_lxcs() {
                 --default-item "skip" \
                 --menu \
                 "$message" \
-                18 78 4 \
+                "$DIALOG_HEIGHT" \
+                "$DIALOG_WIDTH" \
+                3 \
                 "skip" \
                 "Skip this container" \
                 "temporary" \
-                "Start it, maintain it, then stop it again" \
+                "Start, maintain, then stop" \
                 "leave-running" \
-                "Start it, maintain it, and leave it running" \
+                "Start, maintain, leave running" \
                 3>&1 1>&2 2>&3
         )"
 
-        if [[ $? -ne 0 ]]; then
+        exit_status=$?
+
+        if (( exit_status != 0 )); then
             result="skip"
         fi
 
@@ -569,31 +677,40 @@ task_label() {
         apt-update)
             printf 'Update package lists'
             ;;
+
         apt-upgrade)
             printf 'Install available package upgrades'
             ;;
+
         apt-autoremove)
             printf 'Remove unused packages'
             ;;
+
         apt-clean)
             printf 'Clean the APT package cache'
             ;;
+
         journal-clean)
             printf 'Remove journal entries older than %s' \
                 "$JOURNAL_RETENTION"
             ;;
+
         logrotate)
             printf 'Run normal log rotation'
             ;;
+
         temp-clean)
-            printf 'Clean temporary files using system policies'
+            printf 'Clean temporary files'
             ;;
+
         fstrim)
             printf 'Trim supported filesystems'
             ;;
+
         docker-prune)
             printf 'Remove unused Docker data, excluding volumes'
             ;;
+
         *)
             printf '%s' "$1"
             ;;
@@ -601,65 +718,77 @@ task_label() {
 }
 
 select_tasks() {
-    local result
-    local -a chosen=()
+    local output
+    local exit_status
+    local task
 
     while true; do
-        result="$(
+        calculate_dialog_size
+
+        output="$(
             whiptail \
                 --title "Select Maintenance Tasks" \
                 --checklist \
-                "Use the arrow keys to move. Press Space to select or deselect. Press Enter when finished." \
-                25 92 15 \
+                "Arrow keys: move   Space: check/uncheck   Enter: continue" \
+                "$DIALOG_HEIGHT" \
+                "$DIALOG_WIDTH" \
+                "$LIST_HEIGHT" \
                 "apt-update" \
                 "Update package lists" \
                 "ON" \
                 "apt-upgrade" \
-                "Install available package upgrades" \
+                "Install package upgrades" \
                 "ON" \
                 "apt-autoremove" \
                 "Remove unused packages" \
                 "OFF" \
                 "apt-clean" \
-                "Clean the APT package cache" \
+                "Clean APT package cache" \
                 "OFF" \
                 "journal-clean" \
-                "Remove system journal entries older than ${JOURNAL_RETENTION}" \
+                "Clean journal older than ${JOURNAL_RETENTION}" \
                 "OFF" \
                 "logrotate" \
                 "Run normal log rotation" \
                 "OFF" \
                 "temp-clean" \
-                "Clean temporary files using system policies" \
+                "Clean temporary files" \
                 "OFF" \
                 "fstrim" \
                 "Trim supported filesystems" \
                 "OFF" \
                 "docker-prune" \
-                "Remove unused Docker data where Docker is detected" \
+                "Clean unused Docker data" \
                 "OFF" \
+                --separate-output \
                 3>&1 1>&2 2>&3
         )"
 
-        if [[ $? -ne 0 ]]; then
-            clear
+        exit_status=$?
+
+        if (( exit_status != 0 )); then
+            clear 2>/dev/null || true
             printf 'No changes were made.\n'
             exit 0
         fi
 
-        chosen=()
-        eval "chosen=($result)"
+        SELECTED_TASKS=()
 
-        if (( ${#chosen[@]} == 0 )); then
+        while IFS= read -r task; do
+            [[ -n "$task" ]] && SELECTED_TASKS+=("$task")
+        done <<< "$output"
+
+        if (( ${#SELECTED_TASKS[@]} == 0 )); then
             whiptail \
                 --title "Nothing Selected" \
                 --msgbox \
                 "Select at least one maintenance task." \
-                9 56
+                9 \
+                "$DIALOG_WIDTH"
+
             continue
         fi
 
-        SELECTED_TASKS=("${chosen[@]}")
         return
     done
 }
@@ -688,13 +817,15 @@ build_execution_plan() {
 
             case "$action" in
                 skip)
-                    plan+=" [will be skipped]"
+                    plan+=" [skip]"
                     ;;
+
                 temporary)
                     plan+=" [start temporarily]"
                     ;;
+
                 leave-running)
-                    plan+=" [start and leave running]"
+                    plan+=" [leave running]"
                     ;;
             esac
 
@@ -707,16 +838,16 @@ build_execution_plan() {
     plan+="-----"$'\n'
 
     for task in "${SELECTED_TASKS[@]}"; do
-        plan+="• $(task_label "$task")"$'\n'
+        plan+="* $(task_label "$task")"$'\n'
     done
 
     plan+=$'\n'
     plan+="SAFETY"$'\n'
     plan+="------"$'\n'
-    plan+="• No automatic reboots"$'\n'
-    plan+="• No Docker volume removal"$'\n'
-    plan+="• No forced container shutdowns"$'\n'
-    plan+="• Unsupported tasks will be skipped"$'\n'
+    plan+="* No automatic reboots"$'\n'
+    plan+="* No Docker volume removal"$'\n'
+    plan+="* No forced container shutdowns"$'\n'
+    plan+="* Unsupported tasks are skipped"$'\n'
 
     printf '%s' "$plan"
 }
@@ -724,6 +855,7 @@ build_execution_plan() {
 confirm_execution_plan() {
     local plan
 
+    calculate_dialog_size
     plan="$(build_execution_plan)"
 
     if ! whiptail \
@@ -731,9 +863,10 @@ confirm_execution_plan() {
         --scrolltext \
         --yesno \
         "$plan" \
-        30 94; then
+        "$DIALOG_HEIGHT" \
+        "$DIALOG_WIDTH"; then
 
-        clear
+        clear 2>/dev/null || true
         printf 'No maintenance tasks were run.\n'
         exit 0
     fi
@@ -763,6 +896,7 @@ get_lxc_available_bytes() {
 run_host_command() {
     local target="$1"
     local description="$2"
+
     shift 2
 
     printf '\n%s\n' "${BOLD}${description}${RESET}"
@@ -773,6 +907,7 @@ run_host_command() {
     fi
 
     record_failure "$target" "$description failed."
+
     return 1
 }
 
@@ -790,6 +925,7 @@ run_lxc_command() {
     fi
 
     record_failure "$target" "$description failed."
+
     return 1
 }
 
@@ -842,6 +978,7 @@ run_host_task() {
                 record_skip \
                     "$target" \
                     "journalctl is unavailable; journal cleanup skipped."
+
                 return
             fi
 
@@ -856,6 +993,7 @@ run_host_task() {
                 record_skip \
                     "$target" \
                     "logrotate is unavailable; log rotation skipped."
+
                 return
             fi
 
@@ -869,13 +1007,14 @@ run_host_task() {
             if ! command_exists systemd-tmpfiles; then
                 record_skip \
                     "$target" \
-                    "systemd-tmpfiles is unavailable; temporary-file cleanup skipped."
+                    "systemd-tmpfiles is unavailable; temporary cleanup skipped."
+
                 return
             fi
 
             run_host_command \
                 "$target" \
-                "Cleaning temporary files using system policies" \
+                "Cleaning temporary files" \
                 systemd-tmpfiles --clean
             ;;
 
@@ -884,6 +1023,7 @@ run_host_task() {
                 record_skip \
                     "$target" \
                     "fstrim is unavailable; filesystem trim skipped."
+
                 return
             fi
 
@@ -898,6 +1038,7 @@ run_host_task() {
                 record_skip \
                     "$target" \
                     "Docker was not detected on the host."
+
                 return
             fi
 
@@ -969,6 +1110,7 @@ run_lxc_task() {
                 record_skip \
                     "$target" \
                     "journalctl is unavailable; journal cleanup skipped."
+
                 return
             fi
 
@@ -984,6 +1126,7 @@ run_lxc_task() {
                 record_skip \
                     "$target" \
                     "logrotate is unavailable; log rotation skipped."
+
                 return
             fi
 
@@ -998,14 +1141,15 @@ run_lxc_task() {
             if ! lxc_has_command "$vmid" systemd-tmpfiles; then
                 record_skip \
                     "$target" \
-                    "systemd-tmpfiles is unavailable; temporary-file cleanup skipped."
+                    "systemd-tmpfiles is unavailable; temporary cleanup skipped."
+
                 return
             fi
 
             run_lxc_command \
                 "$vmid" \
                 "$target" \
-                "Cleaning temporary files using system policies" \
+                "Cleaning temporary files" \
                 "systemd-tmpfiles --clean"
             ;;
 
@@ -1029,6 +1173,7 @@ run_lxc_task() {
                 record_skip \
                     "$target" \
                     "Docker was not detected; Docker cleanup skipped."
+
                 return
             fi
 
@@ -1092,7 +1237,7 @@ start_lxc() {
 
         record_failure \
             "$target" \
-            "The container did not reach running status within ${START_TIMEOUT_SECONDS} seconds."
+            "The container did not start within ${START_TIMEOUT_SECONDS} seconds."
 
         return 1
     fi
@@ -1100,6 +1245,7 @@ start_lxc() {
     LXC_STATUS["$vmid"]="running"
 
     print_success "LXC ${vmid} is running."
+
     return 0
 }
 
@@ -1115,7 +1261,9 @@ stop_temporarily_started_lxc() {
     if ! pct shutdown "$vmid" --timeout "$SHUTDOWN_TIMEOUT_SECONDS"; then
         print_warning "Graceful shutdown failed for LXC ${vmid}."
         print_warning "The wizard will not force-stop it."
+
         unset 'TEMPORARILY_RUNNING[$vmid]'
+
         return
     fi
 
@@ -1127,7 +1275,7 @@ stop_temporarily_started_lxc() {
         print_success "LXC ${vmid} was returned to stopped status."
     else
         print_warning \
-            "LXC ${vmid} did not report stopped status before the timeout."
+            "LXC ${vmid} did not stop before the timeout."
     fi
 
     unset 'TEMPORARILY_RUNNING[$vmid]'
@@ -1193,6 +1341,7 @@ perform_lxc_maintenance() {
             record_skip \
                 "$target" \
                 "This stopped container was selected to be skipped."
+
             continue
         fi
 
@@ -1214,6 +1363,7 @@ perform_lxc_maintenance() {
                 "Unsupported operating system: ${os_id:-unknown}. Debian and Ubuntu are supported."
 
             stop_temporarily_started_lxc "$vmid"
+
             continue
         fi
 
@@ -1303,11 +1453,14 @@ display_summary() {
     printf '\n'
 
     if (( TOTAL_FAILED > 0 )); then
-        print_warning "Maintenance completed with one or more failures."
+        print_warning \
+            "Maintenance completed with one or more failures."
     elif (( TOTAL_OK == 0 )); then
-        print_warning "No maintenance tasks were completed."
+        print_warning \
+            "No maintenance tasks were completed."
     else
-        print_success "Maintenance completed without reported task failures."
+        print_success \
+            "Maintenance completed without reported task failures."
     fi
 
     printf '\nNo host or container was rebooted.\n'
@@ -1321,6 +1474,7 @@ main() {
     require_root
     verify_proxmox
     ensure_whiptail
+    calculate_dialog_size
 
     choose_target
 
@@ -1332,7 +1486,7 @@ main() {
     select_tasks
     confirm_execution_plan
 
-    clear
+    clear 2>/dev/null || true
 
     if [[ "$TARGET_MODE" == "host" ]]; then
         perform_host_maintenance
