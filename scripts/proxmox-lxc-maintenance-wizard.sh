@@ -11,7 +11,7 @@
 #     - The local Proxmox VE host
 #     - One or more locally managed LXC containers
 #
-# Supported LXC operating systems:
+# Supported operating systems:
 #     - Debian
 #     - Ubuntu
 #
@@ -21,7 +21,7 @@
 #     - Does not remove Docker volumes
 #     - Does not force-stop containers
 #     - Does not start stopped containers without permission
-#     - Displays an execution plan before making changes
+#     - Shows the complete execution plan before running
 #
 # License:
 #   MIT
@@ -33,22 +33,38 @@ set -uo pipefail
 # Script configuration
 ###############################################################################
 
-SCRIPT_VERSION="1.1.1"
+SCRIPT_VERSION="1.2.0"
 
 JOURNAL_RETENTION="14d"
 START_TIMEOUT_SECONDS=60
 SHUTDOWN_TIMEOUT_SECONDS=60
 
+LOG_ROOT="/var/log/proxmox-lxc-maintenance"
+RUN_TIMESTAMP="$(date '+%Y%m%d-%H%M%S')"
+RUN_LOG_DIR="${LOG_ROOT}/${RUN_TIMESTAMP}"
+
 TARGET_MODE=""
+PROFILE_NAME=""
+RUN_START_EPOCH=0
+RUN_END_EPOCH=0
 
 DIALOG_HEIGHT=20
 DIALOG_WIDTH=70
 LIST_HEIGHT=10
 
+CURRENT_STEP=0
+TOTAL_STEPS=0
+
+TOTAL_OK=0
+TOTAL_FAILED=0
+TOTAL_SKIPPED=0
+TOTAL_SPACE_CHANGE=0
+
 declare -a ALL_LXC_IDS=()
 declare -a RUNNING_LXC_IDS=()
 declare -a SELECTED_LXC_IDS=()
 declare -a SELECTED_TASKS=()
+declare -a PROFILE_TASKS=()
 
 declare -A LXC_NAME=()
 declare -A LXC_STATUS=()
@@ -58,25 +74,27 @@ declare -A TEMPORARILY_RUNNING=()
 declare -A TARGET_OK=()
 declare -A TARGET_FAILED=()
 declare -A TARGET_SKIPPED=()
+declare -A TARGET_STATUS=()
+
 declare -A SPACE_BEFORE=()
 declare -A SPACE_AFTER=()
+declare -A TARGET_DURATION=()
+declare -A TARGET_START_EPOCH=()
 
-TOTAL_OK=0
-TOTAL_FAILED=0
-TOTAL_SKIPPED=0
+declare -A TASK_STATE=()
 
 ###############################################################################
-# Preserve interactive input when launched through curl
+# Preserve terminal input when launched through curl
 ###############################################################################
 
-# This allows both of these forms to work:
+# Supported launch methods:
 #
 #   bash <(curl -fsSL URL)
 #
 #   curl -fsSL URL | bash
 #
-# Without this, Bash may consume the same standard input that the interactive
-# menus need.
+# When the script is piped into Bash, standard input normally belongs to the
+# pipe. Redirecting from /dev/tty allows interactive menus to receive input.
 
 if [[ ! -t 0 ]] && [[ -r /dev/tty ]]; then
     exec </dev/tty
@@ -89,6 +107,7 @@ fi
 if [[ -t 1 ]] && command -v tput >/dev/null 2>&1; then
     RESET="$(tput sgr0 2>/dev/null || true)"
     BOLD="$(tput bold 2>/dev/null || true)"
+    DIM="$(tput dim 2>/dev/null || true)"
     RED="$(tput setaf 1 2>/dev/null || true)"
     GREEN="$(tput setaf 2 2>/dev/null || true)"
     YELLOW="$(tput setaf 3 2>/dev/null || true)"
@@ -96,6 +115,7 @@ if [[ -t 1 ]] && command -v tput >/dev/null 2>&1; then
 else
     RESET=""
     BOLD=""
+    DIM=""
     RED=""
     GREEN=""
     YELLOW=""
@@ -169,6 +189,12 @@ array_contains() {
     return 1
 }
 
+sanitize_filename() {
+    printf '%s' "$1" |
+        tr '[:upper:]' '[:lower:]' |
+        tr -cs 'a-z0-9._-' '-'
+}
+
 format_bytes() {
     local bytes="${1:-0}"
 
@@ -186,6 +212,27 @@ format_bytes() {
             printf '%s bytes' "$bytes"
     else
         printf '%s bytes' "$bytes"
+    fi
+}
+
+format_duration() {
+    local total_seconds="${1:-0}"
+    local hours
+    local minutes
+    local seconds
+
+    [[ "$total_seconds" =~ ^[0-9]+$ ]] || total_seconds=0
+
+    hours=$((total_seconds / 3600))
+    minutes=$(((total_seconds % 3600) / 60))
+    seconds=$((total_seconds % 60))
+
+    if (( hours > 0 )); then
+        printf '%dh %dm %ds' "$hours" "$minutes" "$seconds"
+    elif (( minutes > 0 )); then
+        printf '%dm %ds' "$minutes" "$seconds"
+    else
+        printf '%ds' "$seconds"
     fi
 }
 
@@ -216,7 +263,7 @@ calculate_dialog_size() {
             "$terminal_cols"
 
         printf 'Recommended minimum: 18 rows by 58 columns\n\n'
-        printf 'Enlarge the Terminal window and run the script again.\n'
+        printf 'Enlarge the terminal window and run the script again.\n'
 
         exit 1
     fi
@@ -224,27 +271,14 @@ calculate_dialog_size() {
     DIALOG_HEIGHT=$((terminal_rows - 4))
     DIALOG_WIDTH=$((terminal_cols - 4))
 
-    if (( DIALOG_HEIGHT > 28 )); then
-        DIALOG_HEIGHT=28
-    fi
-
-    if (( DIALOG_WIDTH > 88 )); then
-        DIALOG_WIDTH=88
-    fi
-
-    if (( DIALOG_HEIGHT < 18 )); then
-        DIALOG_HEIGHT=18
-    fi
-
-    if (( DIALOG_WIDTH < 58 )); then
-        DIALOG_WIDTH=58
-    fi
+    (( DIALOG_HEIGHT > 30 )) && DIALOG_HEIGHT=30
+    (( DIALOG_WIDTH > 92 )) && DIALOG_WIDTH=92
+    (( DIALOG_HEIGHT < 18 )) && DIALOG_HEIGHT=18
+    (( DIALOG_WIDTH < 58 )) && DIALOG_WIDTH=58
 
     LIST_HEIGHT=$((DIALOG_HEIGHT - 9))
 
-    if (( LIST_HEIGHT < 6 )); then
-        LIST_HEIGHT=6
-    fi
+    (( LIST_HEIGHT < 6 )) && LIST_HEIGHT=6
 }
 
 ###############################################################################
@@ -279,7 +313,7 @@ ensure_whiptail() {
     print_header
 
     print_warning \
-        "The whiptail package is required for interactive checkbox menus."
+        "The whiptail package is required for interactive menus."
 
     printf '\n'
 
@@ -303,6 +337,16 @@ ensure_whiptail() {
     print_success "whiptail was installed."
 
     sleep 1
+}
+
+initialize_logging() {
+    if ! mkdir -p "$RUN_LOG_DIR"; then
+        print_error "Could not create the log directory:"
+        print_error "$RUN_LOG_DIR"
+        exit 1
+    fi
+
+    chmod 750 "$LOG_ROOT" "$RUN_LOG_DIR" 2>/dev/null || true
 }
 
 ###############################################################################
@@ -534,13 +578,13 @@ select_lxcs() {
         output="$(
             whiptail \
                 --title "Select LXC Containers" \
+                --separate-output \
                 --checklist \
                 "Arrow keys: move   Space: check/uncheck   Enter: continue" \
                 "$DIALOG_HEIGHT" \
                 "$DIALOG_WIDTH" \
                 "$LIST_HEIGHT" \
                 "${checklist_items[@]}" \
-                --separate-output \
                 3>&1 1>&2 2>&3
         )"
 
@@ -669,6 +713,138 @@ configure_stopped_lxcs() {
 }
 
 ###############################################################################
+# Maintenance profiles
+###############################################################################
+
+set_profile_tasks() {
+    local profile="$1"
+
+    PROFILE_TASKS=()
+
+    case "$profile" in
+        weekly)
+            PROFILE_NAME="Weekly Maintenance"
+
+            PROFILE_TASKS=(
+                "apt-update"
+                "apt-upgrade"
+                "apt-autoremove"
+                "apt-clean"
+            )
+            ;;
+
+        monthly)
+            PROFILE_NAME="Monthly Maintenance"
+
+            PROFILE_TASKS=(
+                "apt-update"
+                "apt-upgrade"
+                "apt-autoremove"
+                "apt-clean"
+                "journal-clean"
+                "logrotate"
+                "temp-clean"
+                "fstrim"
+            )
+            ;;
+
+        docker)
+            PROFILE_NAME="Docker Maintenance"
+
+            PROFILE_TASKS=(
+                "apt-update"
+                "apt-upgrade"
+                "apt-autoremove"
+                "apt-clean"
+                "docker-prune"
+            )
+            ;;
+
+        full)
+            PROFILE_NAME="Full Maintenance"
+
+            PROFILE_TASKS=(
+                "apt-update"
+                "apt-upgrade"
+                "apt-autoremove"
+                "apt-clean"
+                "journal-clean"
+                "logrotate"
+                "temp-clean"
+                "fstrim"
+                "docker-prune"
+            )
+            ;;
+
+        custom)
+            PROFILE_NAME="Custom Maintenance"
+
+            PROFILE_TASKS=(
+                "apt-update"
+                "apt-upgrade"
+            )
+            ;;
+
+        *)
+            PROFILE_NAME="Custom Maintenance"
+
+            PROFILE_TASKS=(
+                "apt-update"
+                "apt-upgrade"
+            )
+            ;;
+    esac
+}
+
+choose_profile() {
+    local result
+    local exit_status
+
+    calculate_dialog_size
+
+    result="$(
+        whiptail \
+            --title "Maintenance Profile" \
+            --menu \
+            "Choose a starting profile. You can edit the selected tasks on the next screen." \
+            "$DIALOG_HEIGHT" \
+            "$DIALOG_WIDTH" \
+            5 \
+            "weekly" \
+            "Updates, upgrades, autoremove, and APT cleanup" \
+            "monthly" \
+            "Weekly tasks plus logs, temporary files, and trim" \
+            "docker" \
+            "Package maintenance plus Docker cleanup" \
+            "full" \
+            "All available maintenance tasks" \
+            "custom" \
+            "Choose tasks manually" \
+            3>&1 1>&2 2>&3
+    )"
+
+    exit_status=$?
+
+    if (( exit_status != 0 )); then
+        clear 2>/dev/null || true
+        printf 'No changes were made.\n'
+        exit 0
+    fi
+
+    set_profile_tasks "$result"
+}
+
+task_enabled_by_profile() {
+    local task="$1"
+
+    if array_contains "$task" "${PROFILE_TASKS[@]}"; then
+        printf 'ON'
+    else
+        printf 'OFF'
+    fi
+}
+
+###############################################################################
 # Maintenance-task selection
 ###############################################################################
 
@@ -727,40 +903,40 @@ select_tasks() {
 
         output="$(
             whiptail \
-                --title "Select Maintenance Tasks" \
+                --title "${PROFILE_NAME}" \
+                --separate-output \
                 --checklist \
-                "Arrow keys: move   Space: check/uncheck   Enter: continue" \
+                "Review the profile. Press Space to change any selection." \
                 "$DIALOG_HEIGHT" \
                 "$DIALOG_WIDTH" \
                 "$LIST_HEIGHT" \
                 "apt-update" \
                 "Update package lists" \
-                "ON" \
+                "$(task_enabled_by_profile "apt-update")" \
                 "apt-upgrade" \
                 "Install package upgrades" \
-                "ON" \
+                "$(task_enabled_by_profile "apt-upgrade")" \
                 "apt-autoremove" \
                 "Remove unused packages" \
-                "OFF" \
+                "$(task_enabled_by_profile "apt-autoremove")" \
                 "apt-clean" \
                 "Clean APT package cache" \
-                "OFF" \
+                "$(task_enabled_by_profile "apt-clean")" \
                 "journal-clean" \
                 "Clean journal older than ${JOURNAL_RETENTION}" \
-                "OFF" \
+                "$(task_enabled_by_profile "journal-clean")" \
                 "logrotate" \
                 "Run normal log rotation" \
-                "OFF" \
+                "$(task_enabled_by_profile "logrotate")" \
                 "temp-clean" \
                 "Clean temporary files" \
-                "OFF" \
+                "$(task_enabled_by_profile "temp-clean")" \
                 "fstrim" \
                 "Trim supported filesystems" \
-                "OFF" \
+                "$(task_enabled_by_profile "fstrim")" \
                 "docker-prune" \
                 "Clean unused Docker data" \
-                "OFF" \
-                --separate-output \
+                "$(task_enabled_by_profile "docker-prune")" \
                 3>&1 1>&2 2>&3
         )"
 
@@ -794,6 +970,36 @@ select_tasks() {
 }
 
 ###############################################################################
+# Runtime estimation
+###############################################################################
+
+estimate_runtime_minutes() {
+    local target_count=1
+    local task_count="${#SELECTED_TASKS[@]}"
+    local estimate
+
+    if [[ "$TARGET_MODE" == "lxc" ]]; then
+        target_count=0
+
+        local vmid
+
+        for vmid in "${SELECTED_LXC_IDS[@]}"; do
+            if [[ "${STOPPED_ACTION[$vmid]:-already-running}" != "skip" ]]; then
+                target_count=$((target_count + 1))
+            fi
+        done
+
+        (( target_count < 1 )) && target_count=1
+    fi
+
+    estimate=$(((target_count * task_count * 25) / 60))
+
+    (( estimate < 1 )) && estimate=1
+
+    printf '%s' "$estimate"
+}
+
+###############################################################################
 # Execution-plan confirmation
 ###############################################################################
 
@@ -802,7 +1008,15 @@ build_execution_plan() {
     local vmid
     local task
     local action
+    local estimate_minutes
 
+    estimate_minutes="$(estimate_runtime_minutes)"
+
+    plan+="PROFILE"$'\n'
+    plan+="-------"$'\n'
+    plan+="${PROFILE_NAME}"$'\n'
+
+    plan+=$'\n'
     plan+="TARGETS"$'\n'
     plan+="-------"$'\n'
 
@@ -842,6 +1056,11 @@ build_execution_plan() {
     done
 
     plan+=$'\n'
+    plan+="ESTIMATED RUNTIME"$'\n'
+    plan+="-----------------"$'\n'
+    plan+="Approximately ${estimate_minutes} minutes"$'\n'
+
+    plan+=$'\n'
     plan+="SAFETY"$'\n'
     plan+="------"$'\n'
     plan+="* No automatic reboots"$'\n'
@@ -873,6 +1092,80 @@ confirm_execution_plan() {
 }
 
 ###############################################################################
+# Progress tracking
+###############################################################################
+
+calculate_total_steps() {
+    local target_count=1
+    local vmid
+
+    if [[ "$TARGET_MODE" == "lxc" ]]; then
+        target_count=0
+
+        for vmid in "${SELECTED_LXC_IDS[@]}"; do
+            if [[ "${STOPPED_ACTION[$vmid]:-already-running}" != "skip" ]]; then
+                target_count=$((target_count + 1))
+            fi
+        done
+    fi
+
+    TOTAL_STEPS=$((target_count * ${#SELECTED_TASKS[@]}))
+    CURRENT_STEP=0
+}
+
+render_progress_bar() {
+    local percent="$1"
+    local width=30
+    local filled
+    local empty
+    local bar=""
+
+    filled=$((percent * width / 100))
+    empty=$((width - filled))
+
+    if (( filled > 0 )); then
+        bar+="$(printf '%*s' "$filled" '' | tr ' ' '#')"
+    fi
+
+    if (( empty > 0 )); then
+        bar+="$(printf '%*s' "$empty" '' | tr ' ' '.')"
+    fi
+
+    printf '%s' "$bar"
+}
+
+show_progress() {
+    local target_label="$1"
+    local task="$2"
+    local percent=100
+    local bar
+
+    CURRENT_STEP=$((CURRENT_STEP + 1))
+
+    if (( TOTAL_STEPS > 0 )); then
+        percent=$((CURRENT_STEP * 100 / TOTAL_STEPS))
+    fi
+
+    bar="$(render_progress_bar "$percent")"
+
+    printf '\n%s\n' \
+        "${CYAN}============================================================${RESET}"
+
+    printf '%s\n' "${BOLD}${target_label}${RESET}"
+
+    printf '[%s/%s] [%s] %s%%\n' \
+        "$CURRENT_STEP" \
+        "$TOTAL_STEPS" \
+        "$bar" \
+        "$percent"
+
+    printf '%s\n' "$(task_label "$task")"
+
+    printf '%s\n' \
+        "${CYAN}============================================================${RESET}"
+}
+
+###############################################################################
 # Space measurement
 ###############################################################################
 
@@ -889,44 +1182,182 @@ get_lxc_available_bytes() {
         awk 'NR == 2 {print $1}'
 }
 
-###############################################################################
-# Command wrappers
-###############################################################################
-
-run_host_command() {
+calculate_space_change() {
     local target="$1"
-    local description="$2"
+    local before="${SPACE_BEFORE[$target]:-}"
+    local after="${SPACE_AFTER[$target]:-}"
 
-    shift 2
+    if [[ "$before" =~ ^[0-9]+$ ]] &&
+        [[ "$after" =~ ^[0-9]+$ ]]; then
 
-    printf '\n%s\n' "${BOLD}${description}${RESET}"
-
-    if "$@"; then
-        record_success "$target" "$description completed."
-        return 0
+        printf '%s' "$((after - before))"
+    else
+        printf ''
     fi
-
-    record_failure "$target" "$description failed."
-
-    return 1
 }
 
-run_lxc_command() {
+###############################################################################
+# Logging and quiet command execution
+###############################################################################
+
+task_log_path() {
+    local target="$1"
+    local task="$2"
+
+    printf '%s/%s-%s.log' \
+        "$RUN_LOG_DIR" \
+        "$(sanitize_filename "$target")" \
+        "$(sanitize_filename "$task")"
+}
+
+show_failure_log_prompt() {
+    local description="$1"
+    local log_file="$2"
+
+    calculate_dialog_size
+
+    if whiptail \
+        --title "Task Failed" \
+        --yesno \
+        "${description} failed.\n\nView the task log now?" \
+        12 \
+        "$DIALOG_WIDTH"; then
+
+        clear 2>/dev/null || true
+
+        printf '%s\n' \
+            "${BOLD}Task log: ${log_file}${RESET}"
+
+        printf '%s\n\n' \
+            "------------------------------------------------------------"
+
+        if [[ -s "$log_file" ]]; then
+            cat "$log_file"
+        else
+            printf 'The task did not produce any log output.\n'
+        fi
+
+        printf '\n'
+        read -r -p "Press Enter to continue..."
+    fi
+}
+
+run_quiet_host_command() {
+    local target="$1"
+    local task="$2"
+    local description="$3"
+
+    shift 3
+
+    local log_file
+    local exit_code
+
+    log_file="$(task_log_path "$target" "$task")"
+
+    printf '%s...' "$description"
+
+    "$@" >"$log_file" 2>&1
+    exit_code=$?
+
+    if (( exit_code == 0 )); then
+        printf ' %s\n' "${GREEN}Complete${RESET}"
+        record_success "$target" "$description completed."
+        return 0
+    fi
+
+    printf ' %s\n' "${RED}Failed${RESET}"
+    record_failure "$target" "$description failed."
+    show_failure_log_prompt "$description" "$log_file"
+
+    return "$exit_code"
+}
+
+run_quiet_lxc_command() {
     local vmid="$1"
     local target="$2"
+    local task="$3"
+    local description="$4"
+    local command_string="$5"
+
+    local log_file
+    local exit_code
+
+    log_file="$(task_log_path "$target" "$task")"
+
+    printf '%s...' "$description"
+
+    pct exec "$vmid" -- \
+        bash -lc "$command_string" >"$log_file" 2>&1
+
+    exit_code=$?
+
+    if (( exit_code == 0 )); then
+        printf ' %s\n' "${GREEN}Complete${RESET}"
+        record_success "$target" "$description completed."
+        return 0
+    fi
+
+    printf ' %s\n' "${RED}Failed${RESET}"
+    record_failure "$target" "$description failed."
+    show_failure_log_prompt "$description" "$log_file"
+
+    return "$exit_code"
+}
+
+run_logged_host_command() {
+    local target="$1"
+    local task="$2"
     local description="$3"
-    local command_string="$4"
 
-    printf '\n%s\n' "${BOLD}${description}${RESET}"
+    shift 3
 
-    if pct exec "$vmid" -- bash -lc "$command_string"; then
+    local log_file
+    local exit_code
+
+    log_file="$(task_log_path "$target" "$task")"
+
+    printf '%s...\n' "$description"
+
+    "$@" 2>&1 | tee "$log_file"
+    exit_code=${PIPESTATUS[0]}
+
+    if (( exit_code == 0 )); then
         record_success "$target" "$description completed."
         return 0
     fi
 
     record_failure "$target" "$description failed."
 
-    return 1
+    return "$exit_code"
+}
+
+run_logged_lxc_command() {
+    local vmid="$1"
+    local target="$2"
+    local task="$3"
+    local description="$4"
+    local command_string="$5"
+
+    local log_file
+    local exit_code
+
+    log_file="$(task_log_path "$target" "$task")"
+
+    printf '%s...\n' "$description"
+
+    pct exec "$vmid" -- \
+        bash -lc "$command_string" 2>&1 | tee "$log_file"
+
+    exit_code=${PIPESTATUS[0]}
+
+    if (( exit_code == 0 )); then
+        record_success "$target" "$description completed."
+        return 0
+    fi
+
+    record_failure "$target" "$description failed."
+
+    return "$exit_code"
 }
 
 ###############################################################################
@@ -943,32 +1374,36 @@ run_host_task() {
 
     case "$task" in
         apt-update)
-            run_host_command \
+            run_quiet_host_command \
                 "$target" \
+                "$task" \
                 "Updating package lists" \
                 env DEBIAN_FRONTEND=noninteractive \
                 apt-get update
             ;;
 
         apt-upgrade)
-            run_host_command \
+            run_quiet_host_command \
                 "$target" \
-                "Installing available package upgrades" \
+                "$task" \
+                "Installing package upgrades" \
                 env DEBIAN_FRONTEND=noninteractive \
                 apt-get -y upgrade
             ;;
 
         apt-autoremove)
-            run_host_command \
+            run_quiet_host_command \
                 "$target" \
+                "$task" \
                 "Removing unused packages" \
                 env DEBIAN_FRONTEND=noninteractive \
                 apt-get -y autoremove
             ;;
 
         apt-clean)
-            run_host_command \
+            run_quiet_host_command \
                 "$target" \
+                "$task" \
                 "Cleaning the APT package cache" \
                 apt-get clean
             ;;
@@ -978,12 +1413,12 @@ run_host_task() {
                 record_skip \
                     "$target" \
                     "journalctl is unavailable; journal cleanup skipped."
-
                 return
             fi
 
-            run_host_command \
+            run_logged_host_command \
                 "$target" \
+                "$task" \
                 "Removing journal entries older than ${JOURNAL_RETENTION}" \
                 journalctl --vacuum-time="$JOURNAL_RETENTION"
             ;;
@@ -993,12 +1428,12 @@ run_host_task() {
                 record_skip \
                     "$target" \
                     "logrotate is unavailable; log rotation skipped."
-
                 return
             fi
 
-            run_host_command \
+            run_quiet_host_command \
                 "$target" \
+                "$task" \
                 "Running normal log rotation" \
                 logrotate /etc/logrotate.conf
             ;;
@@ -1008,12 +1443,12 @@ run_host_task() {
                 record_skip \
                     "$target" \
                     "systemd-tmpfiles is unavailable; temporary cleanup skipped."
-
                 return
             fi
 
-            run_host_command \
+            run_quiet_host_command \
                 "$target" \
+                "$task" \
                 "Cleaning temporary files" \
                 systemd-tmpfiles --clean
             ;;
@@ -1023,12 +1458,12 @@ run_host_task() {
                 record_skip \
                     "$target" \
                     "fstrim is unavailable; filesystem trim skipped."
-
                 return
             fi
 
-            run_host_command \
+            run_logged_host_command \
                 "$target" \
+                "$task" \
                 "Trimming supported host filesystems" \
                 fstrim -av
             ;;
@@ -1038,12 +1473,12 @@ run_host_task() {
                 record_skip \
                     "$target" \
                     "Docker was not detected on the host."
-
                 return
             fi
 
-            run_host_command \
+            run_logged_host_command \
                 "$target" \
+                "$task" \
                 "Removing unused Docker data, excluding volumes" \
                 docker system prune -f
             ;;
@@ -1074,33 +1509,37 @@ run_lxc_task() {
 
     case "$task" in
         apt-update)
-            run_lxc_command \
+            run_quiet_lxc_command \
                 "$vmid" \
                 "$target" \
+                "$task" \
                 "Updating package lists" \
                 "DEBIAN_FRONTEND=noninteractive apt-get update"
             ;;
 
         apt-upgrade)
-            run_lxc_command \
+            run_quiet_lxc_command \
                 "$vmid" \
                 "$target" \
-                "Installing available package upgrades" \
+                "$task" \
+                "Installing package upgrades" \
                 "DEBIAN_FRONTEND=noninteractive apt-get -y upgrade"
             ;;
 
         apt-autoremove)
-            run_lxc_command \
+            run_quiet_lxc_command \
                 "$vmid" \
                 "$target" \
+                "$task" \
                 "Removing unused packages" \
                 "DEBIAN_FRONTEND=noninteractive apt-get -y autoremove"
             ;;
 
         apt-clean)
-            run_lxc_command \
+            run_quiet_lxc_command \
                 "$vmid" \
                 "$target" \
+                "$task" \
                 "Cleaning the APT package cache" \
                 "apt-get clean"
             ;;
@@ -1110,13 +1549,13 @@ run_lxc_task() {
                 record_skip \
                     "$target" \
                     "journalctl is unavailable; journal cleanup skipped."
-
                 return
             fi
 
-            run_lxc_command \
+            run_logged_lxc_command \
                 "$vmid" \
                 "$target" \
+                "$task" \
                 "Removing journal entries older than ${JOURNAL_RETENTION}" \
                 "journalctl --vacuum-time='${JOURNAL_RETENTION}'"
             ;;
@@ -1126,13 +1565,13 @@ run_lxc_task() {
                 record_skip \
                     "$target" \
                     "logrotate is unavailable; log rotation skipped."
-
                 return
             fi
 
-            run_lxc_command \
+            run_quiet_lxc_command \
                 "$vmid" \
                 "$target" \
+                "$task" \
                 "Running normal log rotation" \
                 "logrotate /etc/logrotate.conf"
             ;;
@@ -1142,22 +1581,29 @@ run_lxc_task() {
                 record_skip \
                     "$target" \
                     "systemd-tmpfiles is unavailable; temporary cleanup skipped."
-
                 return
             fi
 
-            run_lxc_command \
+            run_quiet_lxc_command \
                 "$vmid" \
                 "$target" \
+                "$task" \
                 "Cleaning temporary files" \
                 "systemd-tmpfiles --clean"
             ;;
 
         fstrim)
-            printf '\n%s\n' \
-                "${BOLD}Trimming supported container storage${RESET}"
+            local log_file
+            local exit_code
 
-            if pct fstrim "$vmid"; then
+            log_file="$(task_log_path "$target" "$task")"
+
+            printf 'Trimming supported container storage...\n'
+
+            pct fstrim "$vmid" 2>&1 | tee "$log_file"
+            exit_code=${PIPESTATUS[0]}
+
+            if (( exit_code == 0 )); then
                 record_success \
                     "$target" \
                     "Filesystem trim completed."
@@ -1173,13 +1619,13 @@ run_lxc_task() {
                 record_skip \
                     "$target" \
                     "Docker was not detected; Docker cleanup skipped."
-
                 return
             fi
 
-            run_lxc_command \
+            run_logged_lxc_command \
                 "$vmid" \
                 "$target" \
+                "$task" \
                 "Removing unused Docker data, excluding volumes" \
                 "docker system prune -f"
             ;;
@@ -1263,7 +1709,6 @@ stop_temporarily_started_lxc() {
         print_warning "The wizard will not force-stop it."
 
         unset 'TEMPORARILY_RUNNING[$vmid]'
-
         return
     fi
 
@@ -1297,12 +1742,57 @@ cleanup_interrupted_run() {
 trap cleanup_interrupted_run INT TERM
 
 ###############################################################################
+# Target timing and status
+###############################################################################
+
+start_target_timer() {
+    local target="$1"
+
+    TARGET_START_EPOCH["$target"]="$(date +%s)"
+}
+
+stop_target_timer() {
+    local target="$1"
+    local start="${TARGET_START_EPOCH[$target]:-}"
+    local end
+
+    end="$(date +%s)"
+
+    if [[ "$start" =~ ^[0-9]+$ ]]; then
+        TARGET_DURATION["$target"]=$((end - start))
+    else
+        TARGET_DURATION["$target"]=0
+    fi
+}
+
+determine_target_status() {
+    local target="$1"
+    local successful="${TARGET_OK[$target]:-0}"
+    local failed="${TARGET_FAILED[$target]:-0}"
+    local skipped="${TARGET_SKIPPED[$target]:-0}"
+
+    if (( failed > 0 )); then
+        TARGET_STATUS["$target"]="Failed"
+    elif (( successful > 0 && skipped > 0 )); then
+        TARGET_STATUS["$target"]="Completed with skips"
+    elif (( successful > 0 )); then
+        TARGET_STATUS["$target"]="Success"
+    elif (( skipped > 0 )); then
+        TARGET_STATUS["$target"]="Skipped"
+    else
+        TARGET_STATUS["$target"]="No tasks completed"
+    fi
+}
+
+###############################################################################
 # Maintenance execution
 ###############################################################################
 
 perform_host_maintenance() {
     local host_os
     local task
+    local target="host"
+    local target_label="Proxmox host: $(hostname)"
 
     print_header
     print_section "Maintaining Proxmox Host"
@@ -1311,42 +1801,58 @@ perform_host_maintenance() {
 
     if ! is_supported_os "$host_os"; then
         print_error "Unsupported host operating system: $host_os"
+        record_failure "$target" "Host operating system is unsupported."
+        determine_target_status "$target"
         return 1
     fi
 
-    SPACE_BEFORE["host"]="$(get_host_available_bytes)"
+    start_target_timer "$target"
+
+    SPACE_BEFORE["$target"]="$(get_host_available_bytes)"
 
     for task in "${SELECTED_TASKS[@]}"; do
+        show_progress "$target_label" "$task"
         run_host_task "$task"
     done
 
-    SPACE_AFTER["host"]="$(get_host_available_bytes)"
+    SPACE_AFTER["$target"]="$(get_host_available_bytes)"
+
+    stop_target_timer "$target"
+    determine_target_status "$target"
 }
 
 perform_lxc_maintenance() {
     local vmid
     local target
+    local target_label
     local action
     local os_id
     local task
 
     for vmid in "${SELECTED_LXC_IDS[@]}"; do
         target="lxc-${vmid}"
+        target_label="LXC ${vmid}: ${LXC_NAME[$vmid]}"
         action="${STOPPED_ACTION[$vmid]:-already-running}"
 
         print_header
-        print_section "Maintaining LXC ${vmid}: ${LXC_NAME[$vmid]}"
+        print_section "Maintaining ${target_label}"
+
+        start_target_timer "$target"
 
         if [[ "$action" == "skip" ]]; then
             record_skip \
                 "$target" \
                 "This stopped container was selected to be skipped."
 
+            stop_target_timer "$target"
+            determine_target_status "$target"
             continue
         fi
 
         if [[ "${LXC_STATUS[$vmid]}" != "running" ]]; then
             if ! start_lxc "$vmid"; then
+                stop_target_timer "$target"
+                determine_target_status "$target"
                 continue
             fi
 
@@ -1363,6 +1869,8 @@ perform_lxc_maintenance() {
                 "Unsupported operating system: ${os_id:-unknown}. Debian and Ubuntu are supported."
 
             stop_temporarily_started_lxc "$vmid"
+            stop_target_timer "$target"
+            determine_target_status "$target"
 
             continue
         fi
@@ -1372,98 +1880,175 @@ perform_lxc_maintenance() {
         SPACE_BEFORE["$target"]="$(get_lxc_available_bytes "$vmid")"
 
         for task in "${SELECTED_TASKS[@]}"; do
+            show_progress "$target_label" "$task"
             run_lxc_task "$vmid" "$task"
         done
 
         SPACE_AFTER["$target"]="$(get_lxc_available_bytes "$vmid")"
 
         stop_temporarily_started_lxc "$vmid"
+
+        stop_target_timer "$target"
+        determine_target_status "$target"
     done
 }
 
 ###############################################################################
-# Summary
+# Summary helpers
 ###############################################################################
 
-calculate_space_change() {
-    local target="$1"
-    local before="${SPACE_BEFORE[$target]:-}"
-    local after="${SPACE_AFTER[$target]:-}"
+status_symbol() {
+    local status="$1"
 
-    if [[ "$before" =~ ^[0-9]+$ ]] &&
-        [[ "$after" =~ ^[0-9]+$ ]]; then
+    case "$status" in
+        Success)
+            printf '%s' "${GREEN}[OK]${RESET}"
+            ;;
 
-        printf '%s' "$((after - before))"
-    else
-        printf ''
-    fi
+        "Completed with skips")
+            printf '%s' "${YELLOW}[ATTENTION]${RESET}"
+            ;;
+
+        Failed)
+            printf '%s' "${RED}[FAILED]${RESET}"
+            ;;
+
+        Skipped)
+            printf '%s' "${YELLOW}[SKIPPED]${RESET}"
+            ;;
+
+        *)
+            printf '%s' "${YELLOW}[UNKNOWN]${RESET}"
+            ;;
+    esac
 }
 
-display_target_summary() {
+display_target_scorecard() {
     local target="$1"
     local label="$2"
+
     local difference
+    local status
+    local duration
 
     difference="$(calculate_space_change "$target")"
+    status="${TARGET_STATUS[$target]:-Unknown}"
+    duration="${TARGET_DURATION[$target]:-0}"
 
-    printf '%s\n' "${BOLD}${label}${RESET}"
-    printf '  Successful: %s\n' "${TARGET_OK[$target]:-0}"
-    printf '  Failed:     %s\n' "${TARGET_FAILED[$target]:-0}"
-    printf '  Skipped:    %s\n' "${TARGET_SKIPPED[$target]:-0}"
+    printf '%s %s\n' \
+        "$(status_symbol "$status")" \
+        "${BOLD}${label}${RESET}"
+
+    printf '    Result:     %s\n' "$status"
+    printf '    Successful: %s\n' "${TARGET_OK[$target]:-0}"
+    printf '    Failed:     %s\n' "${TARGET_FAILED[$target]:-0}"
+    printf '    Skipped:    %s\n' "${TARGET_SKIPPED[$target]:-0}"
+    printf '    Runtime:    %s\n' "$(format_duration "$duration")"
 
     if [[ "$difference" =~ ^-?[0-9]+$ ]]; then
+        TOTAL_SPACE_CHANGE=$((TOTAL_SPACE_CHANGE + difference))
+
         if (( difference > 0 )); then
-            printf '  Recovered:  %s\n' \
+            printf '    Recovered:  %s\n' \
                 "$(format_bytes "$difference")"
         elif (( difference < 0 )); then
-            printf '  Disk use:   Increased by %s\n' \
+            printf '    Disk use:   Increased by %s\n' \
                 "$(format_bytes "$((-difference))")"
         else
-            printf '  Disk use:   No measurable change\n'
+            printf '    Disk use:   No measurable change\n'
         fi
     else
-        printf '  Disk use:   Could not be measured\n'
+        printf '    Disk use:   Could not be measured\n'
     fi
 
     printf '\n'
 }
 
+display_space_total() {
+    print_section "Disk Space Result"
+
+    if (( TOTAL_SPACE_CHANGE > 0 )); then
+        printf 'Net space recovered: %s\n' \
+            "$(format_bytes "$TOTAL_SPACE_CHANGE")"
+    elif (( TOTAL_SPACE_CHANGE < 0 )); then
+        printf 'Net disk use increased by: %s\n' \
+            "$(format_bytes "$((-TOTAL_SPACE_CHANGE))")"
+    else
+        printf 'No measurable net disk-space change.\n'
+    fi
+}
+
+display_overall_result() {
+    print_section "Overall Result"
+
+    if (( TOTAL_FAILED > 0 )); then
+        printf '%s\n' \
+            "${RED}[FAILED] Maintenance completed with one or more failures.${RESET}"
+    elif (( TOTAL_OK == 0 )); then
+        printf '%s\n' \
+            "${YELLOW}[ATTENTION] No maintenance tasks were completed.${RESET}"
+    elif (( TOTAL_SKIPPED > 0 )); then
+        printf '%s\n' \
+            "${YELLOW}[ATTENTION] Maintenance completed with skipped tasks.${RESET}"
+    else
+        printf '%s\n' \
+            "${GREEN}[OK] Maintenance completed successfully.${RESET}"
+    fi
+}
+
+###############################################################################
+# Final summary
+###############################################################################
+
 display_summary() {
     local vmid
+    local total_runtime
+
+    RUN_END_EPOCH="$(date +%s)"
+    total_runtime=$((RUN_END_EPOCH - RUN_START_EPOCH))
+
+    TOTAL_SPACE_CHANGE=0
 
     print_header
-    print_section "Maintenance Summary"
+    print_section "Maintenance Scorecard"
+
+    printf 'Profile: %s\n' "$PROFILE_NAME"
+    printf 'Started: %s\n' \
+        "$(date -d "@${RUN_START_EPOCH}" '+%Y-%m-%d %H:%M:%S' 2>/dev/null ||
+            date '+%Y-%m-%d %H:%M:%S')"
+
+    printf 'Runtime: %s\n\n' \
+        "$(format_duration "$total_runtime")"
 
     if [[ "$TARGET_MODE" == "host" ]]; then
-        display_target_summary \
+        display_target_scorecard \
             "host" \
             "Proxmox host: $(hostname)"
     else
         for vmid in "${SELECTED_LXC_IDS[@]}"; do
-            display_target_summary \
+            display_target_scorecard \
                 "lxc-${vmid}" \
                 "LXC ${vmid}: ${LXC_NAME[$vmid]}"
         done
     fi
 
-    printf '%s\n' "${BOLD}Overall totals${RESET}"
-    printf '  Successful: %s\n' "$TOTAL_OK"
-    printf '  Failed:     %s\n' "$TOTAL_FAILED"
-    printf '  Skipped:    %s\n' "$TOTAL_SKIPPED"
-    printf '\n'
+    display_space_total
 
-    if (( TOTAL_FAILED > 0 )); then
-        print_warning \
-            "Maintenance completed with one or more failures."
-    elif (( TOTAL_OK == 0 )); then
-        print_warning \
-            "No maintenance tasks were completed."
-    else
-        print_success \
-            "Maintenance completed without reported task failures."
-    fi
+    print_section "Task Totals"
+
+    printf 'Successful: %s\n' "$TOTAL_OK"
+    printf 'Failed:     %s\n' "$TOTAL_FAILED"
+    printf 'Skipped:    %s\n' "$TOTAL_SKIPPED"
+
+    display_overall_result
+
+    print_section "Logs"
+
+    printf 'Task logs were saved to:\n\n'
+    printf '  %s\n' "$RUN_LOG_DIR"
 
     printf '\nNo host or container was rebooted.\n'
+    printf 'Docker volumes were not removed.\n'
 }
 
 ###############################################################################
@@ -1475,6 +2060,7 @@ main() {
     verify_proxmox
     ensure_whiptail
     calculate_dialog_size
+    initialize_logging
 
     choose_target
 
@@ -1483,8 +2069,12 @@ main() {
         configure_stopped_lxcs
     fi
 
+    choose_profile
     select_tasks
     confirm_execution_plan
+    calculate_total_steps
+
+    RUN_START_EPOCH="$(date +%s)"
 
     clear 2>/dev/null || true
 
