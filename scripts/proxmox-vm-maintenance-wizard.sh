@@ -3,19 +3,19 @@
 # Proxmox VM Maintenance Wizard
 # https://github.com/SweenLab/personal-proxmox-scripts
 #
-# Maintains Debian and Ubuntu virtual machines through QEMU Guest Agent.
+# Maintains Debian-family virtual machines through QEMU Guest Agent.
 # Supports one-time runs, persistent systemd schedules, protected notification
 # providers, per-provider severities, and summary or detailed reports.
 
 set -uo pipefail
 
 if (( BASH_VERSINFO[0] < 4 )); then
-  printf 'Error: Bash 4 or newer is required. Proxmox VE includes a compatible version.\n' >&2
+  printf 'Error: Bash 4 or newer is required.\n' >&2
   exit 1
 fi
 
 readonly APP_NAME="Proxmox VM Maintenance Wizard"
-readonly APP_VERSION="1.0.0"
+readonly APP_VERSION="1.1.0"
 readonly INSTALL_PATH="/usr/local/sbin/proxmox-vm-maintenance-wizard"
 readonly CONFIG_ROOT="/etc/sweenlab/vm-maintenance"
 readonly PLAN_DIR="${CONFIG_ROOT}/plans"
@@ -38,7 +38,6 @@ declare -a SELECTED_VM_IDS=()
 declare -a SELECTED_TASKS=()
 declare -a SELECTED_PROVIDERS=()
 declare -a PROFILE_TASKS=()
-declare -a RESULT_LINES=()
 declare -a DETAIL_LINES=()
 
 declare -A VM_NAME=()
@@ -57,7 +56,6 @@ PLAN_NAME=""
 PLAN_SLUG=""
 PLAN_REPORT="summary"
 PLAN_NOTIFY="none"
-PLAN_SEVERITIES="info warning error critical"
 PLAN_ENABLED="yes"
 PLAN_CALENDAR=""
 PLAN_TIMEZONE=""
@@ -91,41 +89,16 @@ slugify() {
     cut -c1-48
 }
 
-shell_quote() {
-  printf '%q' "$1"
-}
-
 json_escape() {
   local value=$1
+
   value=${value//\\/\\\\}
   value=${value//\"/\\\"}
   value=${value//$'\n'/\\n}
   value=${value//$'\r'/\\r}
   value=${value//$'\t'/\\t}
+
   printf '%s' "$value"
-}
-
-urlencode() {
-  local value=$1 out="" char hex i
-
-  for ((i=0; i<${#value}; i++)); do
-    char=${value:i:1}
-
-    case "$char" in
-      [a-zA-Z0-9.~_-])
-        out+=$char
-        ;;
-      ' ')
-        out+="%20"
-        ;;
-      *)
-        printf -v hex '%%%02X' "'$char"
-        out+=$hex
-        ;;
-    esac
-  done
-
-  printf '%s' "$out"
 }
 
 truncate_text() {
@@ -172,7 +145,7 @@ verify_host() {
     die "systemd is required."
 
   command_exists timeout ||
-    die "GNU timeout is required (normally provided by coreutils)."
+    die "GNU timeout is required."
 }
 
 calculate_dialog_size() {
@@ -204,13 +177,13 @@ ensure_whiptail() {
   command_exists whiptail && return
 
   printf 'whiptail is required for the interactive interface.\n'
-
   read -r -p "Install it now? [Y/n] " answer
 
   case "${answer:-Y}" in
     [Yy]*)
       apt-get update &&
-        DEBIAN_FRONTEND=noninteractive apt-get install -y whiptail ||
+        DEBIAN_FRONTEND=noninteractive \
+          apt-get install -y whiptail ||
         die "whiptail could not be installed."
       ;;
     *)
@@ -219,8 +192,31 @@ ensure_whiptail() {
   esac
 }
 
+ensure_jq() {
+  command_exists jq && return
+
+  printf 'jq is required to read QEMU Guest Agent responses.\n'
+  read -r -p "Install it now? [Y/n] " answer
+
+  case "${answer:-Y}" in
+    [Yy]*)
+      apt-get update &&
+        DEBIAN_FRONTEND=noninteractive \
+          apt-get install -y jq ||
+        die "jq could not be installed."
+      ;;
+    *)
+      die "jq is required."
+      ;;
+  esac
+}
+
 prepare_directories() {
-  install -d -m 700 "$CONFIG_ROOT" "$PLAN_DIR" "$PROVIDER_DIR"
+  install -d -m 700 \
+    "$CONFIG_ROOT" \
+    "$PLAN_DIR" \
+    "$PROVIDER_DIR"
+
   install -d -m 750 "$LOG_ROOT"
 }
 
@@ -282,12 +278,13 @@ detect_appliance_vm() {
       ;;
   esac
 
-  # Try QEMU Guest Agent OS information for running VMs.
-  # VM-name detection above still protects appliance VMs whose agent is absent.
   if [[ ${VM_STATUS[$vmid]:-} == running ]] &&
      qm agent "$vmid" ping >/dev/null 2>&1; then
 
-    os_info=$(qm agent "$vmid" get-osinfo 2>/dev/null || true)
+    os_info=$(
+      qm agent "$vmid" get-osinfo 2>/dev/null ||
+        true
+    )
 
     case "${os_info,,}" in
       *home\ assistant*)
@@ -359,7 +356,7 @@ HOME ASSISTANT OS
 Update location:
 Settings > System > Updates
 
-Official update guide:
+Official guide:
 https://www.home-assistant.io/common-tasks/os/
 
 OPNSENSE
@@ -367,7 +364,7 @@ OPNSENSE
 Update location:
 System > Firmware > Status
 
-Official update guide:
+Official guide:
 https://docs.opnsense.org/manual/updates.html
 
 This wizard will not run APT, cleanup, filesystem trim, or Docker maintenance inside these appliance VMs." \
@@ -394,9 +391,52 @@ guest_exec() {
   local vmid=$1
   local command=$2
   local guest_timeout=${3:-$GUEST_TIMEOUT}
+  local response
+  local transport_exit
+  local guest_exit
 
-  timeout "$guest_timeout" \
-    qm guest exec "$vmid" -- bash -lc "$command"
+  response=$(
+    timeout "$guest_timeout" \
+      qm guest exec "$vmid" -- bash -lc "$command" 2>&1
+  )
+  transport_exit=$?
+
+  if (( transport_exit != 0 )); then
+    printf '%s\n' "$response" >&2
+    return 125
+  fi
+
+  if ! printf '%s' "$response" |
+    jq -e 'type == "object"' >/dev/null 2>&1; then
+
+    printf \
+      'QEMU Guest Agent returned an unreadable response:\n%s\n' \
+      "$response" \
+      >&2
+
+    return 125
+  fi
+
+  printf '%s' "$response" |
+    jq -r '."out-data" // empty'
+
+  printf '%s' "$response" |
+    jq -r '."err-data" // empty' \
+    >&2
+
+  guest_exit=$(
+    printf '%s' "$response" |
+      jq -r '.exitcode // 255'
+  )
+
+  [[ $guest_exit =~ ^[0-9]+$ ]] ||
+    return 125
+
+  if (( guest_exit > 255 )); then
+    return 255
+  fi
+
+  return "$guest_exit"
 }
 
 guest_capture() {
@@ -408,15 +448,24 @@ guest_capture() {
 
 guest_os_supported() {
   local vmid=$1
-  local os
+  local os_data
+  local os_id
+  local os_like
 
-  os=$(
-    guest_capture "$vmid" \
-      '. /etc/os-release 2>/dev/null; printf "%s" "${ID:-unknown}"' ||
+  os_data=$(
+    guest_capture \
+      "$vmid" \
+      '. /etc/os-release 2>/dev/null || exit 1; printf "%s|%s" "${ID:-unknown}" "${ID_LIKE:-}"' ||
       true
   )
 
-  [[ $os == debian || $os == ubuntu ]]
+  IFS='|' read -r os_id os_like <<<"$os_data"
+
+  os_id=${os_id,,}
+  os_like=${os_like,,}
+
+  [[ $os_id == debian || $os_id == ubuntu ]] ||
+    [[ " ${os_like} " == *" debian "* ]]
 }
 
 start_vm() {
@@ -509,7 +558,7 @@ Home Assistant OS and OPNsense must be maintained through their own web interfac
       --checklist \
       "Space: select or unselect.
 
-Running Debian/Ubuntu VMs are selected by default.
+Running Debian-family VMs are selected by default.
 
 Home Assistant OS and OPNsense are excluded automatically." \
       "$DIALOG_HEIGHT" "$DIALOG_WIDTH" "$LIST_HEIGHT" \
@@ -744,19 +793,24 @@ task_label() {
 task_command() {
   case "$1" in
     apt-update)
-      printf 'DEBIAN_FRONTEND=noninteractive apt-get update'
+      printf \
+        'DEBIAN_FRONTEND=noninteractive apt-get update'
       ;;
     apt-check)
-      printf 'apt-get -s upgrade | awk '\''/^Inst /{count++} END{printf "Available upgrades: %%d\\n", count+0}'\'''
+      printf \
+        'apt-get -s upgrade | awk '\''/^Inst /{count++} END{printf "Available upgrades: %%d\\n", count+0}'\'''
       ;;
     apt-upgrade)
-      printf 'DEBIAN_FRONTEND=noninteractive apt-get -y upgrade'
+      printf \
+        'DEBIAN_FRONTEND=noninteractive apt-get -y upgrade'
       ;;
     apt-autoremove)
-      printf 'DEBIAN_FRONTEND=noninteractive apt-get -y autoremove'
+      printf \
+        'DEBIAN_FRONTEND=noninteractive apt-get -y autoremove'
       ;;
     apt-clean)
-      printf 'apt-get clean'
+      printf \
+        'apt-get clean'
       ;;
     journal-clean)
       printf \
@@ -826,6 +880,7 @@ provider_config_write() {
     for pair in "$@"; do
       key=${pair%%=*}
       value=${pair#*=}
+
       printf '%s=%q\n' "$key" "$value"
     done
   } >"$path"
@@ -885,7 +940,8 @@ Install it now using apt and pipx?" ||
     return 1
 
   apt-get update &&
-    DEBIAN_FRONTEND=noninteractive apt-get install -y pipx &&
+    DEBIAN_FRONTEND=noninteractive \
+      apt-get install -y pipx &&
     PIPX_HOME=/opt/pipx \
       PIPX_BIN_DIR=/usr/local/bin \
       pipx install apprise
@@ -908,9 +964,9 @@ add_provider() {
       --menu \
       "Choose a provider.
 
-No SweenLab backend or account is required." \
+No SweenLab backend is used." \
       24 "$DIALOG_WIDTH" 10 \
-      none "No Notifications (do not add a provider)" \
+      none "No Notifications" \
       discord "Discord incoming webhook" \
       slack "Slack incoming webhook" \
       telegram "Telegram bot" \
@@ -935,7 +991,7 @@ No SweenLab backend or account is required." \
   slug=$(slugify "$name")
 
   [[ -n $slug ]] || {
-    msg "The provider name needs at least one letter or number."
+    msg "The provider name needs a letter or number."
     return
   }
 
@@ -992,7 +1048,7 @@ No SweenLab backend or account is required." \
         input_box \
           "Optional access token.
 
-Leave this blank when authentication is not used:"
+Leave blank if authentication is not used:"
       ) || return
 
       provider_config_write \
@@ -1060,7 +1116,7 @@ smtps://smtp.example.com:465"
 
       value4=$(
         input_box \
-          "Enter the sender and recipient separated by a comma.
+          "Sender and recipient separated by a comma.
 
 Example:
 from@example.com,to@example.com"
@@ -1158,7 +1214,7 @@ send_provider() {
   local payload
   local mail
   local message
-  local -a auth=()
+  local -a authentication=()
 
   case "$PROVIDER_TYPE" in
     discord)
@@ -1213,7 +1269,7 @@ send_provider() {
       body=$(truncate_text "$body" 3500)
 
       if [[ -n ${ACCESS_TOKEN:-} ]]; then
-        auth=(
+        authentication=(
           -H
           "Authorization: Bearer ${ACCESS_TOKEN}"
         )
@@ -1222,7 +1278,7 @@ send_provider() {
       curl \
         -fsS \
         --max-time 20 \
-        "${auth[@]}" \
+        "${authentication[@]}" \
         -H "Title: ${title}" \
         -H "Priority: $(
           [[ $severity == critical ]] &&
@@ -1706,7 +1762,10 @@ EOF
   systemctl daemon-reload
 
   if [[ ${PLAN_ENABLED:-yes} == yes ]]; then
-    systemctl enable --now "${UNIT_PREFIX}-${slug}.timer"
+    systemctl \
+      enable \
+      --now \
+      "${UNIT_PREFIX}-${slug}.timer"
   else
     systemctl \
       disable \
@@ -1724,8 +1783,6 @@ create_or_edit_plan() {
     load_plan "$existing" ||
       return
 
-    discover_vms
-
     PLAN_NAME=$(
       input_box \
         "Schedule name:" \
@@ -1733,47 +1790,29 @@ create_or_edit_plan() {
     ) || return
 
     PLAN_SLUG=$existing
+  fi
 
-    choose_vms ||
-      return
+  choose_vms ||
+    return
 
-    choose_stopped_policies
+  choose_stopped_policies
 
-    choose_profile ||
-      return
+  choose_profile ||
+    return
 
-    choose_tasks ||
-      return
+  choose_tasks ||
+    return
 
-    choose_plan_notifications ||
-      return
+  choose_plan_notifications ||
+    return
 
-    PLAN_REPORT=$(choose_report_format) ||
-      return
+  PLAN_REPORT=$(choose_report_format) ||
+    return
 
-    choose_calendar ||
-      return
-  else
-    choose_vms ||
-      return
+  choose_calendar ||
+    return
 
-    choose_stopped_policies
-
-    choose_profile ||
-      return
-
-    choose_tasks ||
-      return
-
-    choose_plan_notifications ||
-      return
-
-    PLAN_REPORT=$(choose_report_format) ||
-      return
-
-    choose_calendar ||
-      return
-
+  if [[ -z $existing ]]; then
     PLAN_NAME=$(
       input_box \
         "Schedule name:" \
@@ -1894,7 +1933,6 @@ prepare_run() {
 
   install -d -m 750 "$RUN_DIR"
 
-  RESULT_LINES=()
   DETAIL_LINES=()
 
   TOTAL_OK=0
@@ -2048,8 +2086,6 @@ run_selected_plan() {
       continue
     fi
 
-    # Recheck appliance status before every run. This protects saved schedules
-    # created before exclusion support was added and catches renamed VMs.
     if [[ -n ${VM_APPLIANCE[$vmid]:-} ]]; then
       TOTAL_SKIPPED=$((TOTAL_SKIPPED + 1))
       TARGET_SKIPPED["$target"]=1
@@ -2111,7 +2147,7 @@ run_selected_plan() {
       TARGET_SKIPPED["$target"]=1
 
       DETAIL_LINES+=(
-        "VM ${vmid}: unsupported guest OS - SKIPPED; Debian or Ubuntu is required"
+        "VM ${vmid}: unsupported guest OS - SKIPPED; a Debian-family system is required"
       )
 
       continue
@@ -2246,7 +2282,7 @@ main_menu() {
       whiptail \
         --title "$APP_NAME v${APP_VERSION}" \
         --menu \
-        "Maintain Debian and Ubuntu VMs through QEMU Guest Agent.
+        "Maintain Debian-family VMs through QEMU Guest Agent.
 
 Home Assistant OS and OPNsense are excluded." \
         23 "$DIALOG_WIDTH" 9 \
@@ -2329,6 +2365,11 @@ Scheduled mode is used by systemd and is not intended for manual editing.
 Supported guests:
   Debian
   Ubuntu
+  Kali Linux
+  Linux Mint
+  Pop!_OS
+  Raspberry Pi OS
+  Other distributions whose ID_LIKE includes debian
 
 Excluded appliances:
   Home Assistant OS
@@ -2353,10 +2394,14 @@ main() {
       [[ -n ${2:-} ]] ||
         die "--run-plan requires a plan name."
 
+      command_exists jq ||
+        die "jq is required to run scheduled maintenance."
+
       scheduled_entry "$2"
       ;;
     "")
       ensure_whiptail
+      ensure_jq
       calculate_dialog_size
       main_menu
       ;;
