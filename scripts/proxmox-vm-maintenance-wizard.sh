@@ -15,7 +15,7 @@ if (( BASH_VERSINFO[0] < 4 )); then
 fi
 
 readonly APP_NAME="Proxmox VM Maintenance Wizard"
-readonly APP_VERSION="1.2.3"
+readonly APP_VERSION="1.2.4"
 readonly INSTALL_PATH="/usr/local/sbin/proxmox-vm-maintenance-wizard"
 readonly CONFIG_ROOT="/etc/sweenlab/vm-maintenance"
 readonly PLAN_DIR="${CONFIG_ROOT}/plans"
@@ -1432,9 +1432,8 @@ main_menu() {
   while true; do
     action=$(whiptail --title "$APP_NAME v${APP_VERSION}" --menu \
       "Maintain Debian-family VMs through QEMU Guest Agent." \
-      23 "$DIALOG_WIDTH" 9 \
+      22 "$DIALOG_WIDTH" 8 \
       run "Run one-time maintenance" \
-      create "Create a scheduled plan" \
       view "View scheduled plans" \
       edit "Edit a scheduled plan" \
       run-plan "Run a saved plan now" \
@@ -1448,7 +1447,6 @@ main_menu() {
         one_time_run
         [[ $EXIT_REQUESTED == yes ]] && break
         ;;
-      create) create_or_edit_plan ;;
       view) view_plans ;;
       edit) slug=$(select_plan) && create_or_edit_plan "$slug" ;;
       run-plan)
@@ -1480,7 +1478,8 @@ Usage:
   ${INSTALL_PATH} --run-plan PLAN
   ${INSTALL_PATH} --help
 
-Interactive mode creates and manages one-time and scheduled VM maintenance.
+Interactive mode runs one-time maintenance and manages saved scheduled plans.
+After a one-time run completes, the wizard can save that run as a schedule.
 Scheduled mode is used by systemd and is not intended for manual editing.
 
 Supported guests include Debian, Ubuntu, Kali Linux, Linux Mint, Pop!_OS,
