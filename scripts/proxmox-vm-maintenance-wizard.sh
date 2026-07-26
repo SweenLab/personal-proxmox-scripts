@@ -10,12 +10,12 @@
 set -uo pipefail
 
 if (( BASH_VERSINFO[0] < 4 )); then
-  printf 'Error: Bash 4 or newer is required.\n' >&2
+  printf 'Error: Bash 4 or newer is required. Proxmox VE includes a compatible version.\n' >&2
   exit 1
 fi
 
 readonly APP_NAME="Proxmox VM Maintenance Wizard"
-readonly APP_VERSION="1.1.0"
+readonly APP_VERSION="1.2.0"
 readonly INSTALL_PATH="/usr/local/sbin/proxmox-vm-maintenance-wizard"
 readonly CONFIG_ROOT="/etc/sweenlab/vm-maintenance"
 readonly PLAN_DIR="${CONFIG_ROOT}/plans"
@@ -25,6 +25,7 @@ readonly SYSTEMD_DIR="/etc/systemd/system"
 readonly UNIT_PREFIX="sweenlab-vm-maintenance"
 readonly JOURNAL_RETENTION="14d"
 readonly GUEST_TIMEOUT=1800
+readonly SHUTDOWN_TIMEOUT=240
 
 DIALOG_HEIGHT=22
 DIALOG_WIDTH=78
@@ -38,6 +39,7 @@ declare -a SELECTED_VM_IDS=()
 declare -a SELECTED_TASKS=()
 declare -a SELECTED_PROVIDERS=()
 declare -a PROFILE_TASKS=()
+declare -a RESULT_LINES=()
 declare -a DETAIL_LINES=()
 
 declare -A VM_NAME=()
@@ -50,12 +52,14 @@ declare -A TARGET_OK=()
 declare -A TARGET_FAILED=()
 declare -A TARGET_SKIPPED=()
 declare -A TARGET_RECLAIMED=()
+declare -A APT_READY=()
 
 PROFILE="weekly"
 PLAN_NAME=""
 PLAN_SLUG=""
 PLAN_REPORT="summary"
 PLAN_NOTIFY="none"
+PLAN_SEVERITIES="info warning error critical"
 PLAN_ENABLED="yes"
 PLAN_CALENDAR=""
 PLAN_TIMEZONE=""
@@ -160,17 +164,17 @@ calculate_dialog_size() {
   [[ $rows =~ ^[0-9]+$ ]] || rows=24
   [[ $cols =~ ^[0-9]+$ ]] || cols=80
 
-  (( rows >= 18 && cols >= 58 )) ||
+  ((rows >= 18 && cols >= 58)) ||
     die "Enlarge the terminal to at least 18 rows by 58 columns."
 
   DIALOG_HEIGHT=$((rows - 4))
   DIALOG_WIDTH=$((cols - 4))
 
-  (( DIALOG_HEIGHT > 30 )) && DIALOG_HEIGHT=30
-  (( DIALOG_WIDTH > 96 )) && DIALOG_WIDTH=96
+  ((DIALOG_HEIGHT > 30)) && DIALOG_HEIGHT=30
+  ((DIALOG_WIDTH > 96)) && DIALOG_WIDTH=96
 
   LIST_HEIGHT=$((DIALOG_HEIGHT - 9))
-  (( LIST_HEIGHT < 6 )) && LIST_HEIGHT=6
+  ((LIST_HEIGHT < 6)) && LIST_HEIGHT=6
 }
 
 ensure_whiptail() {
@@ -182,8 +186,7 @@ ensure_whiptail() {
   case "${answer:-Y}" in
     [Yy]*)
       apt-get update &&
-        DEBIAN_FRONTEND=noninteractive \
-          apt-get install -y whiptail ||
+        DEBIAN_FRONTEND=noninteractive apt-get install -y whiptail ||
         die "whiptail could not be installed."
       ;;
     *)
@@ -201,8 +204,7 @@ ensure_jq() {
   case "${answer:-Y}" in
     [Yy]*)
       apt-get update &&
-        DEBIAN_FRONTEND=noninteractive \
-          apt-get install -y jq ||
+        DEBIAN_FRONTEND=noninteractive apt-get install -y jq ||
         die "jq could not be installed."
       ;;
     *)
@@ -212,11 +214,7 @@ ensure_jq() {
 }
 
 prepare_directories() {
-  install -d -m 700 \
-    "$CONFIG_ROOT" \
-    "$PLAN_DIR" \
-    "$PROVIDER_DIR"
-
+  install -d -m 700 "$CONFIG_ROOT" "$PLAN_DIR" "$PROVIDER_DIR"
   install -d -m 750 "$LOG_ROOT"
 }
 
@@ -260,43 +258,6 @@ install_self() {
   install -m 755 "$source" "$INSTALL_PATH"
 }
 
-detect_appliance_vm() {
-  local vmid=$1
-  local name=${VM_NAME[$vmid],,}
-  local os_info=""
-
-  VM_APPLIANCE["$vmid"]=""
-
-  case "$name" in
-    *home-assistant*|*homeassistant*|*home_assistant*|haos|haos-*|haos_*)
-      VM_APPLIANCE["$vmid"]="Home Assistant OS"
-      return
-      ;;
-    *opnsense*)
-      VM_APPLIANCE["$vmid"]="OPNsense"
-      return
-      ;;
-  esac
-
-  if [[ ${VM_STATUS[$vmid]:-} == running ]] &&
-     qm agent "$vmid" ping >/dev/null 2>&1; then
-
-    os_info=$(
-      qm agent "$vmid" get-osinfo 2>/dev/null ||
-        true
-    )
-
-    case "${os_info,,}" in
-      *home\ assistant*)
-        VM_APPLIANCE["$vmid"]="Home Assistant OS"
-        ;;
-      *opnsense*)
-        VM_APPLIANCE["$vmid"]="OPNsense"
-        ;;
-    esac
-  fi
-}
-
 discover_vms() {
   VM_IDS=()
   RUNNING_VM_IDS=()
@@ -332,6 +293,42 @@ discover_vms() {
   )
 }
 
+detect_appliance_vm() {
+  local vmid=$1
+  local name=${VM_NAME[$vmid],,}
+  local os_info=""
+
+  VM_APPLIANCE["$vmid"]=""
+
+  case "$name" in
+    *home-assistant* | *homeassistant* | *home_assistant* | haos | haos-*)
+      VM_APPLIANCE["$vmid"]="Home Assistant OS"
+      return
+      ;;
+
+    *opnsense*)
+      VM_APPLIANCE["$vmid"]="OPNsense"
+      return
+      ;;
+  esac
+
+  if [[ ${VM_STATUS[$vmid]:-} == running ]] &&
+    qm agent "$vmid" ping >/dev/null 2>&1; then
+
+    os_info=$(qm agent "$vmid" get-osinfo 2>/dev/null || true)
+
+    case "${os_info,,}" in
+      *home\ assistant*)
+        VM_APPLIANCE["$vmid"]="Home Assistant OS"
+        ;;
+
+      *opnsense*)
+        VM_APPLIANCE["$vmid"]="OPNsense"
+        ;;
+    esac
+  fi
+}
+
 show_appliance_notice() {
   ((${#APPLIANCE_VM_IDS[@]})) || return
 
@@ -349,25 +346,17 @@ show_appliance_notice() {
     "The following appliance VMs were detected and removed from the maintenance list:
 ${detected}
 
-These systems must be maintained through their own supported interfaces.
+They must be maintained through their supported interfaces.
 
-HOME ASSISTANT OS
-
-Update location:
+Home Assistant OS:
 Settings > System > Updates
-
-Official guide:
 https://www.home-assistant.io/common-tasks/os/
 
-OPNSENSE
-
-Update location:
+OPNsense:
 System > Firmware > Status
-
-Official guide:
 https://docs.opnsense.org/manual/updates.html
 
-This wizard will not run APT, cleanup, filesystem trim, or Docker maintenance inside these appliance VMs." \
+This wizard will not run APT, cleanup, trim, or Docker maintenance inside these VMs." \
     "$DIALOG_HEIGHT" "$DIALOG_WIDTH"
 }
 
@@ -383,7 +372,6 @@ agent_available() {
   fi
 
   VM_AGENT["$vmid"]="unavailable"
-
   return 1
 }
 
@@ -401,7 +389,7 @@ guest_exec() {
   )
   transport_exit=$?
 
-  if (( transport_exit != 0 )); then
+  if ((transport_exit != 0)); then
     printf '%s\n' "$response" >&2
     return 125
   fi
@@ -409,10 +397,8 @@ guest_exec() {
   if ! printf '%s' "$response" |
     jq -e 'type == "object"' >/dev/null 2>&1; then
 
-    printf \
-      'QEMU Guest Agent returned an unreadable response:\n%s\n' \
-      "$response" \
-      >&2
+    printf 'QEMU Guest Agent returned an unreadable response:\n%s\n' \
+      "$response" >&2
 
     return 125
   fi
@@ -421,8 +407,7 @@ guest_exec() {
     jq -r '."out-data" // empty'
 
   printf '%s' "$response" |
-    jq -r '."err-data" // empty' \
-    >&2
+    jq -r '."err-data" // empty' >&2
 
   guest_exit=$(
     printf '%s' "$response" |
@@ -432,7 +417,7 @@ guest_exec() {
   [[ $guest_exit =~ ^[0-9]+$ ]] ||
     return 125
 
-  if (( guest_exit > 255 )); then
+  if ((guest_exit > 255)); then
     return 255
   fi
 
@@ -453,8 +438,7 @@ guest_os_supported() {
   local os_like
 
   os_data=$(
-    guest_capture \
-      "$vmid" \
+    guest_capture "$vmid" \
       '. /etc/os-release 2>/dev/null || exit 1; printf "%s|%s" "${ID:-unknown}" "${ID_LIKE:-}"' ||
       true
   )
@@ -475,14 +459,14 @@ start_vm() {
   qm start "$vmid" >/dev/null ||
     return 1
 
-  while (( waited < 120 )); do
+  while ((waited < 120)); do
     VM_STATUS["$vmid"]=$(
       qm status "$vmid" 2>/dev/null |
         awk '{print $2}'
     )
 
     if [[ ${VM_STATUS[$vmid]} == running ]] &&
-       agent_available "$vmid"; then
+      agent_available "$vmid"; then
       return 0
     fi
 
@@ -497,10 +481,10 @@ shutdown_vm() {
   local vmid=$1
   local waited=0
 
-  qm shutdown "$vmid" --timeout 120 >/dev/null 2>&1 ||
-    return 1
+  qm shutdown "$vmid" --timeout 60 \
+    >/dev/null 2>&1 || true
 
-  while (( waited < 120 )); do
+  while ((waited < SHUTDOWN_TIMEOUT)); do
     if [[ $(
       qm status "$vmid" 2>/dev/null |
         awk '{print $2}'
@@ -526,9 +510,7 @@ choose_vms() {
   show_appliance_notice
 
   ((${#MAINTAINABLE_VM_IDS[@]})) || {
-    msg "No eligible VMs remain.
-
-Home Assistant OS and OPNsense must be maintained through their own web interfaces."
+    msg "No eligible VMs remain. Home Assistant OS and OPNsense must be maintained through their web interfaces."
     return 1
   }
 
@@ -558,9 +540,7 @@ Home Assistant OS and OPNsense must be maintained through their own web interfac
       --checklist \
       "Space: select or unselect.
 
-Running Debian-family VMs are selected by default.
-
-Home Assistant OS and OPNsense are excluded automatically." \
+Running Debian-family VMs are selected by default." \
       "$DIALOG_HEIGHT" "$DIALOG_WIDTH" "$LIST_HEIGHT" \
       "${items[@]}" \
       3>&1 1>&2 2>&3
@@ -616,6 +596,7 @@ set_profile() {
         apt-check
       )
       ;;
+
     weekly)
       PROFILE_TASKS=(
         apt-update
@@ -624,6 +605,7 @@ set_profile() {
         apt-clean
       )
       ;;
+
     monthly)
       PROFILE_TASKS=(
         apt-update
@@ -631,11 +613,11 @@ set_profile() {
         apt-autoremove
         apt-clean
         journal-clean
-        logrotate
         temp-clean
         fstrim
       )
       ;;
+
     docker)
       PROFILE_TASKS=(
         apt-update
@@ -645,6 +627,7 @@ set_profile() {
         docker-prune
       )
       ;;
+
     full)
       PROFILE_TASKS=(
         apt-update
@@ -652,16 +635,14 @@ set_profile() {
         apt-autoremove
         apt-clean
         journal-clean
-        logrotate
         temp-clean
         fstrim
         docker-prune
       )
       ;;
+
     custom)
-      PROFILE_TASKS=(
-        apt-update
-      )
+      PROFILE_TASKS=(apt-update)
       ;;
   esac
 }
@@ -677,7 +658,7 @@ choose_profile() {
       20 "$DIALOG_WIDTH" 6 \
       check "Check only; do not install upgrades" \
       weekly "Updates and routine APT cleanup" \
-      monthly "Weekly tasks plus logs, temp files, and trim" \
+      monthly "Weekly tasks plus journal, temp files, and trim" \
       docker "Weekly tasks plus Docker cleanup" \
       full "All supported tasks" \
       custom "Choose tasks manually" \
@@ -688,11 +669,9 @@ choose_profile() {
 }
 
 profile_state() {
-  if array_contains "$1" "${PROFILE_TASKS[@]}"; then
-    printf ON
-  else
+  array_contains "$1" "${PROFILE_TASKS[@]}" &&
+    printf ON ||
     printf OFF
-  fi
 }
 
 choose_tasks() {
@@ -704,7 +683,7 @@ choose_tasks() {
       --title "Select Maintenance Tasks" \
       --separate-output \
       --checklist \
-      "Review the profile. Press Space to change selections." \
+      "Review the profile. Space changes selections." \
       "$DIALOG_HEIGHT" "$DIALOG_WIDTH" "$LIST_HEIGHT" \
       apt-update \
       "Refresh package lists" \
@@ -724,9 +703,6 @@ choose_tasks() {
       journal-clean \
       "Remove journal entries older than ${JOURNAL_RETENTION}" \
       "$(profile_state journal-clean)" \
-      logrotate \
-      "Run normal log rotation" \
-      "$(profile_state logrotate)" \
       temp-clean \
       "Clean temporary files using system policies" \
       "$(profile_state temp-clean)" \
@@ -757,33 +733,39 @@ task_label() {
     apt-update)
       printf "Refresh package lists"
       ;;
+
     apt-check)
       printf "Report available upgrades"
       ;;
+
     apt-upgrade)
       printf "Install package upgrades"
       ;;
+
     apt-autoremove)
       printf "Remove unused packages"
       ;;
+
     apt-clean)
       printf "Clean APT cache"
       ;;
+
     journal-clean)
       printf "Clean old journal entries"
       ;;
-    logrotate)
-      printf "Run log rotation"
-      ;;
+
     temp-clean)
       printf "Clean temporary files"
       ;;
+
     fstrim)
       printf "Trim guest filesystems"
       ;;
+
     docker-prune)
       printf "Clean unused Docker data"
       ;;
+
     *)
       printf '%s' "$1"
       ;;
@@ -793,50 +775,88 @@ task_label() {
 task_command() {
   case "$1" in
     apt-update)
-      printf \
-        'DEBIAN_FRONTEND=noninteractive apt-get update'
+      printf '%s' \
+        'DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=120 update'
       ;;
+
     apt-check)
-      printf \
-        'apt-get -s upgrade | awk '\''/^Inst /{count++} END{printf "Available upgrades: %%d\\n", count+0}'\'''
+      printf '%s' \
+        'apt-get -s upgrade | awk '\''/^Inst /{count++} END{printf "Available upgrades: %d\n", count+0}'\'''
       ;;
+
     apt-upgrade)
-      printf \
-        'DEBIAN_FRONTEND=noninteractive apt-get -y upgrade'
+      printf '%s' \
+        'DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=120 -y upgrade'
       ;;
+
     apt-autoremove)
-      printf \
-        'DEBIAN_FRONTEND=noninteractive apt-get -y autoremove'
+      printf '%s' \
+        'DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=120 -y autoremove'
       ;;
+
     apt-clean)
-      printf \
-        'apt-get clean'
+      printf '%s' \
+        'apt-get -o DPkg::Lock::Timeout=120 clean'
       ;;
+
     journal-clean)
-      printf \
-        'command -v journalctl >/dev/null && journalctl --vacuum-time=%q' \
+      printf 'journalctl --vacuum-time=%q' \
         "$JOURNAL_RETENTION"
       ;;
-    logrotate)
-      printf \
-        'command -v logrotate >/dev/null && logrotate /etc/logrotate.conf'
-      ;;
+
     temp-clean)
-      printf \
-        'command -v systemd-tmpfiles >/dev/null && systemd-tmpfiles --clean'
+      printf '%s' \
+        'systemd-tmpfiles --clean'
       ;;
+
     fstrim)
-      printf \
-        'command -v fstrim >/dev/null && fstrim -av'
+      printf '%s' \
+        'fstrim -av'
       ;;
+
     docker-prune)
-      printf \
-        'command -v docker >/dev/null && docker system prune -f'
+      printf '%s' \
+        'docker system prune -f'
       ;;
+
     *)
       return 1
       ;;
   esac
+}
+
+task_requirement() {
+  case "$1" in
+    journal-clean)
+      printf 'journalctl'
+      ;;
+
+    temp-clean)
+      printf 'systemd-tmpfiles'
+      ;;
+
+    fstrim)
+      printf 'fstrim'
+      ;;
+
+    docker-prune)
+      printf 'docker'
+      ;;
+
+    *)
+      return 1
+      ;;
+  esac
+}
+
+guest_has_command() {
+  local vmid=$1
+  local command_name=$2
+
+  guest_exec \
+    "$vmid" \
+    "command -v ${command_name} >/dev/null 2>&1" \
+    >/dev/null 2>&1
 }
 
 provider_paths() {
@@ -936,7 +956,7 @@ ensure_apprise() {
   yesno \
     "Apprise is not installed.
 
-Install it now using apt and pipx?" ||
+Install it now with apt and pipx?" ||
     return 1
 
   apt-get update &&
@@ -962,11 +982,9 @@ add_provider() {
     whiptail \
       --title "Add Notification Provider" \
       --menu \
-      "Choose a provider.
-
-No SweenLab backend is used." \
+      "Choose a provider. No SweenLab backend is used." \
       24 "$DIALOG_WIDTH" 10 \
-      none "No Notifications" \
+      none "No Notifications (do not add a provider)" \
       discord "Discord incoming webhook" \
       slack "Slack incoming webhook" \
       telegram "Telegram bot" \
@@ -1002,9 +1020,10 @@ No SweenLab backend is used." \
     return
 
   case "$type" in
-    discord|slack|webhook)
+    discord | slack | webhook)
       value1=$(
-        password_box "Paste the webhook URL:"
+        password_box \
+          "Paste the webhook URL:"
       ) || return
 
       provider_config_write \
@@ -1015,13 +1034,16 @@ No SweenLab backend is used." \
         "$report" \
         "WEBHOOK_URL=$value1"
       ;;
+
     telegram)
       value1=$(
-        password_box "Telegram bot token:"
+        password_box \
+          "Telegram bot token:"
       ) || return
 
       value2=$(
-        input_box "Telegram chat ID:"
+        input_box \
+          "Telegram chat ID:"
       ) || return
 
       provider_config_write \
@@ -1033,6 +1055,7 @@ No SweenLab backend is used." \
         "BOT_TOKEN=$value1" \
         "CHAT_ID=$value2"
       ;;
+
     ntfy)
       value1=$(
         input_box \
@@ -1041,14 +1064,13 @@ No SweenLab backend is used." \
       ) || return
 
       value2=$(
-        input_box "ntfy topic:"
+        input_box \
+          "ntfy topic:"
       ) || return
 
       value3=$(
         input_box \
-          "Optional access token.
-
-Leave blank if authentication is not used:"
+          "Optional access token (leave blank if unused):"
       ) || return
 
       provider_config_write \
@@ -1061,13 +1083,16 @@ Leave blank if authentication is not used:"
         "TOPIC=$value2" \
         "ACCESS_TOKEN=$value3"
       ;;
+
     gotify)
       value1=$(
-        input_box "Gotify server URL:"
+        input_box \
+          "Gotify server URL:"
       ) || return
 
       value2=$(
-        password_box "Gotify application token:"
+        password_box \
+          "Gotify application token:"
       ) || return
 
       provider_config_write \
@@ -1079,13 +1104,16 @@ Leave blank if authentication is not used:"
         "SERVER_URL=$value1" \
         "APP_TOKEN=$value2"
       ;;
+
     pushover)
       value1=$(
-        password_box "Pushover application API token:"
+        password_box \
+          "Pushover application API token:"
       ) || return
 
       value2=$(
-        password_box "Pushover user or group key:"
+        password_box \
+          "Pushover user or group key:"
       ) || return
 
       provider_config_write \
@@ -1097,28 +1125,27 @@ Leave blank if authentication is not used:"
         "APP_TOKEN=$value1" \
         "USER_KEY=$value2"
       ;;
+
     smtp)
       value1=$(
         input_box \
-          "SMTP URL.
-
-Example:
-smtps://smtp.example.com:465"
+          "SMTP URL, such as smtps://smtp.example.com:465:"
       ) || return
 
       value2=$(
-        input_box "SMTP username:"
+        input_box \
+          "SMTP username:"
       ) || return
 
       value3=$(
-        password_box "SMTP password:"
+        password_box \
+          "SMTP password:"
       ) || return
 
       value4=$(
         input_box \
-          "Sender and recipient separated by a comma.
+          "From and recipient separated by a comma:
 
-Example:
 from@example.com,to@example.com"
       ) || return
 
@@ -1134,6 +1161,7 @@ from@example.com,to@example.com"
         "MAIL_FROM=${value4%%,*}" \
         "MAIL_TO=${value4#*,}"
       ;;
+
     apprise)
       ensure_apprise || {
         msg "Apprise was not installed."
@@ -1141,7 +1169,8 @@ from@example.com,to@example.com"
       }
 
       value1=$(
-        password_box "Apprise notification URL:"
+        password_box \
+          "Apprise notification URL:"
       ) || return
 
       provider_config_write \
@@ -1155,9 +1184,7 @@ from@example.com,to@example.com"
   esac
 
   if test_provider "$slug"; then
-    msg "Test notification sent successfully.
-
-The provider was saved."
+    msg "Test notification sent. Provider saved."
   else
     msg "The provider was saved, but its test failed.
 
@@ -1176,7 +1203,9 @@ load_provider() {
     PROVIDER_NAME \
     PROVIDER_TYPE \
     PROVIDER_SEVERITIES \
-    PROVIDER_REPORT \
+    PROVIDER_REPORT
+
+  unset \
     WEBHOOK_URL \
     BOT_TOKEN \
     CHAT_ID \
@@ -1184,7 +1213,9 @@ load_provider() {
     TOPIC \
     ACCESS_TOKEN \
     APP_TOKEN \
-    USER_KEY \
+    USER_KEY
+
+  unset \
     SMTP_URL \
     SMTP_USER \
     SMTP_PASS \
@@ -1212,9 +1243,9 @@ send_provider() {
     return 0
 
   local payload
+  local -a auth=()
   local mail
   local message
-  local -a authentication=()
 
   case "$PROVIDER_TYPE" in
     discord)
@@ -1235,6 +1266,7 @@ send_provider() {
         "$WEBHOOK_URL" \
         >/dev/null
       ;;
+
     slack)
       body=$(truncate_text "$body" 35000)
       message="*${title}*"$'\n'"${body}"
@@ -1253,6 +1285,7 @@ send_provider() {
         "$WEBHOOK_URL" \
         >/dev/null
       ;;
+
     telegram)
       body=$(truncate_text "$body" 3800)
 
@@ -1265,11 +1298,12 @@ send_provider() {
         "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
         >/dev/null
       ;;
+
     ntfy)
       body=$(truncate_text "$body" 3500)
 
       if [[ -n ${ACCESS_TOKEN:-} ]]; then
-        authentication=(
+        auth=(
           -H
           "Authorization: Bearer ${ACCESS_TOKEN}"
         )
@@ -1278,7 +1312,7 @@ send_provider() {
       curl \
         -fsS \
         --max-time 20 \
-        "${authentication[@]}" \
+        "${auth[@]}" \
         -H "Title: ${title}" \
         -H "Priority: $(
           [[ $severity == critical ]] &&
@@ -1289,6 +1323,7 @@ send_provider() {
         "${SERVER_URL%/}/${TOPIC}" \
         >/dev/null
       ;;
+
     gotify)
       body=$(truncate_text "$body" 15000)
 
@@ -1306,6 +1341,7 @@ send_provider() {
         "${SERVER_URL%/}/message?token=${APP_TOKEN}" \
         >/dev/null
       ;;
+
     pushover)
       body=$(truncate_text "$body" 900)
 
@@ -1325,6 +1361,7 @@ send_provider() {
         https://api.pushover.net/1/messages.json \
         >/dev/null
       ;;
+
     smtp)
       mail=$(mktemp)
 
@@ -1349,12 +1386,13 @@ send_provider() {
 
       rm -f "$mail"
       ;;
+
     webhook)
       payload=$(
         printf \
           '{"source":"SweenLab","title":"%s","severity":"%s","message":"%s"}' \
           "$(json_escape "$title")" \
-          "$(json_escape "$severity")" \
+          "$severity" \
           "$(json_escape "$body")"
       )
 
@@ -1366,6 +1404,7 @@ send_provider() {
         "$WEBHOOK_URL" \
         >/dev/null
       ;;
+
     apprise)
       command_exists apprise ||
         return 1
@@ -1376,6 +1415,7 @@ send_provider() {
         "$APPRISE_URL" \
         >/dev/null
       ;;
+
     *)
       return 1
       ;;
@@ -1427,7 +1467,7 @@ notification_center() {
         add "Add a provider" \
         test "Test a provider" \
         view "View configured provider names" \
-        edit "Replace a provider configuration" \
+        edit "Replace a provider's configuration" \
         remove "Remove a provider" \
         back "Return to the main menu" \
         3>&1 1>&2 2>&3
@@ -1437,21 +1477,24 @@ notification_center() {
       add)
         add_provider
         ;;
+
       test)
         slug=$(select_existing_provider) ||
           continue
 
         if test_provider "$slug"; then
-          msg "Test notification sent successfully."
+          msg "Test sent successfully."
         else
-          msg "The notification test failed."
+          msg "The test failed."
         fi
         ;;
+
       view)
         msg "Configured providers:
 
 $(provider_names | sed 's/^/- /')"
         ;;
+
       edit)
         slug=$(select_existing_provider) ||
           continue
@@ -1459,15 +1502,15 @@ $(provider_names | sed 's/^/- /')"
         rm -f "${PROVIDER_DIR}/${slug}.conf"
         add_provider
         ;;
+
       remove)
         slug=$(select_existing_provider) ||
           continue
 
-        if yesno "Remove provider '${slug}'?"; then
+        yesno "Remove provider '${slug}'?" &&
           rm -f "${PROVIDER_DIR}/${slug}.conf"
-          msg "Provider '${slug}' was removed."
-        fi
         ;;
+
       back)
         return
         ;;
@@ -1507,6 +1550,7 @@ choose_plan_notifications() {
     msg "No providers are configured.
 
 Add one in Notification Settings or choose No Notifications."
+
     return 1
   fi
 
@@ -1541,7 +1585,7 @@ detect_timezone() {
 
 choose_calendar() {
   local frequency
-  local run_time
+  local time
   local day
   local timezone
 
@@ -1556,26 +1600,27 @@ choose_calendar() {
       daily "Every day" \
       weekly "Once each week" \
       monthly "Once each month" \
-      custom "Custom systemd OnCalendar value" \
+      custom "Custom OnCalendar value" \
       3>&1 1>&2 2>&3
   ) || return 1
 
   PLAN_TIMEZONE=$(
     input_box \
-      "Timezone using an IANA timezone name:" \
+      "Timezone (IANA name):" \
       "$timezone"
   ) || return 1
 
   case "$frequency" in
     daily)
-      run_time=$(
+      time=$(
         input_box \
-          "Time using 24-hour HH:MM format:" \
+          "Time (24-hour HH:MM):" \
           "03:00"
       ) || return 1
 
-      PLAN_CALENDAR="*-*-* ${run_time}:00 ${PLAN_TIMEZONE}"
+      PLAN_CALENDAR="*-*-* ${time}:00 ${PLAN_TIMEZONE}"
       ;;
+
     weekly)
       day=$(
         whiptail \
@@ -1593,47 +1638,49 @@ choose_calendar() {
           3>&1 1>&2 2>&3
       ) || return 1
 
-      run_time=$(
+      time=$(
         input_box \
-          "Time using 24-hour HH:MM format:" \
+          "Time (24-hour HH:MM):" \
           "03:00"
       ) || return 1
 
-      PLAN_CALENDAR="${day} *-*-* ${run_time}:00 ${PLAN_TIMEZONE}"
+      PLAN_CALENDAR="${day} *-*-* ${time}:00 ${PLAN_TIMEZONE}"
       ;;
+
     monthly)
       day=$(
         input_box \
-          "Day of the month from 1 through 28:" \
+          "Day of month (1-28):" \
           "1"
       ) || return 1
 
-      [[ $day =~ ^([1-9]|1[0-9]|2[0-8])$ ]] || {
-        msg "Enter a day from 1 through 28."
+      [[ $day =~ ^([1-9]|1[0-9]|2[0-8])$ ]] ||
         return 1
-      }
 
-      run_time=$(
+      time=$(
         input_box \
-          "Time using 24-hour HH:MM format:" \
+          "Time (24-hour HH:MM):" \
           "03:00"
       ) || return 1
 
-      PLAN_CALENDAR="*-*-${day} ${run_time}:00 ${PLAN_TIMEZONE}"
+      PLAN_CALENDAR="*-*-${day} ${time}:00 ${PLAN_TIMEZONE}"
       ;;
+
     custom)
       PLAN_CALENDAR=$(
         input_box \
-          "Enter a systemd OnCalendar value:" \
+          "systemd OnCalendar value:" \
           "*-*-* 03:00:00 ${PLAN_TIMEZONE}"
       ) || return 1
       ;;
   esac
 
-  systemd-analyze calendar "$PLAN_CALENDAR" >/dev/null 2>&1 || {
+  systemd-analyze calendar "$PLAN_CALENDAR" \
+    >/dev/null 2>&1 || {
     msg "The schedule is not valid:
 
 ${PLAN_CALENDAR}"
+
     return 1
   }
 }
@@ -1656,8 +1703,7 @@ write_plan() {
     printf 'PLAN_ENABLED=%q\n' "$PLAN_ENABLED"
 
     for vmid in "${SELECTED_VM_IDS[@]}"; do
-      printf \
-        'STOPPED_%s=%q\n' \
+      printf 'STOPPED_%s=%q\n' \
         "$vmid" \
         "${STOPPED_POLICY[$vmid]:-$PLAN_STOPPED_DEFAULT}"
     done
@@ -1670,7 +1716,7 @@ load_plan() {
   local slug=$1
   local path="${PLAN_DIR}/${slug}.conf"
   local vmid
-  local variable_name
+  local var
 
   [[ -r $path ]] ||
     return 1
@@ -1681,13 +1727,18 @@ load_plan() {
 
   PROFILE=${PLAN_PROFILE:-weekly}
 
-  read -r -a SELECTED_VM_IDS <<<"${PLAN_VMS:-}"
-  read -r -a SELECTED_TASKS <<<"${PLAN_TASKS:-}"
-  read -r -a SELECTED_PROVIDERS <<<"${PLAN_PROVIDERS:-}"
+  read -r -a SELECTED_VM_IDS \
+    <<<"${PLAN_VMS:-}"
+
+  read -r -a SELECTED_TASKS \
+    <<<"${PLAN_TASKS:-}"
+
+  read -r -a SELECTED_PROVIDERS \
+    <<<"${PLAN_PROVIDERS:-}"
 
   for vmid in "${SELECTED_VM_IDS[@]}"; do
-    variable_name="STOPPED_${vmid}"
-    STOPPED_POLICY["$vmid"]=${!variable_name:-skip}
+    var="STOPPED_${vmid}"
+    STOPPED_POLICY["$vmid"]=${!var:-skip}
   done
 }
 
@@ -1727,7 +1778,7 @@ select_plan() {
 
 write_units() {
   local slug=$1
-  local configuration="${PLAN_DIR}/${slug}.conf"
+  local conf="${PLAN_DIR}/${slug}.conf"
 
   load_plan "$slug" ||
     return 1
@@ -1739,7 +1790,7 @@ write_units() {
 Description=SweenLab VM maintenance plan: ${slug}
 Wants=network-online.target
 After=network-online.target
-ConditionPathExists=${configuration}
+ConditionPathExists=${conf}
 
 [Service]
 Type=oneshot
@@ -1762,17 +1813,14 @@ EOF
   systemctl daemon-reload
 
   if [[ ${PLAN_ENABLED:-yes} == yes ]]; then
-    systemctl \
-      enable \
+    systemctl enable \
       --now \
       "${UNIT_PREFIX}-${slug}.timer"
   else
-    systemctl \
-      disable \
+    systemctl disable \
       --now \
       "${UNIT_PREFIX}-${slug}.timer" \
-      >/dev/null 2>&1 ||
-      true
+      >/dev/null 2>&1 || true
   fi
 }
 
@@ -1783,36 +1831,28 @@ create_or_edit_plan() {
     load_plan "$existing" ||
       return
 
-    PLAN_NAME=$(
-      input_box \
-        "Schedule name:" \
-        "$PLAN_NAME"
-    ) || return
+    discover_vms
+  else
+    choose_vms ||
+      return
 
-    PLAN_SLUG=$existing
-  fi
+    choose_stopped_policies
 
-  choose_vms ||
-    return
+    choose_profile ||
+      return
 
-  choose_stopped_policies
+    choose_tasks ||
+      return
 
-  choose_profile ||
-    return
+    choose_plan_notifications ||
+      return
 
-  choose_tasks ||
-    return
+    PLAN_REPORT=$(choose_report_format) ||
+      return
 
-  choose_plan_notifications ||
-    return
+    choose_calendar ||
+      return
 
-  PLAN_REPORT=$(choose_report_format) ||
-    return
-
-  choose_calendar ||
-    return
-
-  if [[ -z $existing ]]; then
     PLAN_NAME=$(
       input_box \
         "Schedule name:" \
@@ -1821,6 +1861,36 @@ create_or_edit_plan() {
 
     PLAN_SLUG=$(slugify "$PLAN_NAME")
     PLAN_ENABLED=yes
+  fi
+
+  if [[ -n $existing ]]; then
+    PLAN_NAME=$(
+      input_box \
+        "Schedule name:" \
+        "$PLAN_NAME"
+    ) || return
+
+    PLAN_SLUG=$existing
+
+    choose_vms ||
+      return
+
+    choose_stopped_policies
+
+    choose_profile ||
+      return
+
+    choose_tasks ||
+      return
+
+    choose_plan_notifications ||
+      return
+
+    PLAN_REPORT=$(choose_report_format) ||
+      return
+
+    choose_calendar ||
+      return
   fi
 
   [[ -n $PLAN_SLUG ]] || {
@@ -1834,8 +1904,6 @@ create_or_edit_plan() {
   msg "Scheduled plan saved:
 
 ${PLAN_NAME}
-
-Schedule:
 ${PLAN_CALENDAR}"
 }
 
@@ -1843,8 +1911,7 @@ view_plans() {
   local output
 
   output=$(
-    systemctl \
-      list-timers \
+    systemctl list-timers \
       --all \
       "${UNIT_PREFIX}-*.timer" \
       --no-pager 2>&1 ||
@@ -1864,23 +1931,20 @@ toggle_plan() {
   load_plan "$slug" ||
     return
 
-  if systemctl \
-    is-enabled \
+  if systemctl is-enabled \
     --quiet \
     "${UNIT_PREFIX}-${slug}.timer"; then
 
     state=no
 
-    systemctl \
-      disable \
+    systemctl disable \
       --now \
       "${UNIT_PREFIX}-${slug}.timer" \
       >/dev/null
   else
     state=yes
 
-    systemctl \
-      enable \
+    systemctl enable \
       --now \
       "${UNIT_PREFIX}-${slug}.timer" \
       >/dev/null
@@ -1905,12 +1969,10 @@ delete_plan() {
   yesno "Delete scheduled plan '${slug}'?" ||
     return
 
-  systemctl \
-    disable \
+  systemctl disable \
     --now \
     "${UNIT_PREFIX}-${slug}.timer" \
-    >/dev/null 2>&1 ||
-    true
+    >/dev/null 2>&1 || true
 
   rm -f \
     "${SYSTEMD_DIR}/${UNIT_PREFIX}-${slug}.timer" \
@@ -1933,7 +1995,15 @@ prepare_run() {
 
   install -d -m 750 "$RUN_DIR"
 
+  RESULT_LINES=()
   DETAIL_LINES=()
+
+  TARGET_OK=()
+  TARGET_FAILED=()
+  TARGET_SKIPPED=()
+  TARGET_RECLAIMED=()
+  TEMP_STARTED=()
+  APT_READY=()
 
   TOTAL_OK=0
   TOTAL_FAILED=0
@@ -1941,8 +2011,8 @@ prepare_run() {
   CURRENT_STEP=0
 
   for vmid in "${SELECTED_VM_IDS[@]}"; do
-    if [[ ${STOPPED_POLICY[$vmid]:-skip} == skip ]] &&
-       [[ ${VM_STATUS[$vmid]:-stopped} != running ]]; then
+    if [[ ${STOPPED_POLICY[$vmid]:-skip} == skip &&
+      ${VM_STATUS[$vmid]:-stopped} != running ]]; then
       continue
     fi
 
@@ -1961,7 +2031,9 @@ run_task() {
   local log
   local before
   local after
-  local exit_code
+  local rc
+  local requirement
+  local failure_reason
 
   label=$(task_label "$task")
 
@@ -1980,6 +2052,46 @@ run_task() {
     "${VM_NAME[$vmid]}" \
     "$label"
 
+  if [[ $task == apt-check ||
+    $task == apt-upgrade ||
+    $task == apt-autoremove ||
+    $task == apt-clean ]] &&
+    [[ ${APT_READY[$vmid]:-yes} == no ]]; then
+
+    printf 'SKIPPED\n'
+
+    TARGET_SKIPPED["$target"]=$(
+      (${TARGET_SKIPPED[$target]:-0} + 1)
+    )
+    TOTAL_SKIPPED=$((TOTAL_SKIPPED + 1))
+
+    DETAIL_LINES+=(
+      "VM ${vmid} ${VM_NAME[$vmid]}: ${label} - SKIPPED because package-list refresh failed"
+    )
+
+    return
+  fi
+
+  if requirement=$(
+    task_requirement "$task" 2>/dev/null
+  ) &&
+    ! guest_has_command "$vmid" "$requirement"; then
+
+    printf 'SKIPPED (%s is not installed)\n' \
+      "$requirement"
+
+    TARGET_SKIPPED["$target"]=$(
+      (${TARGET_SKIPPED[$target]:-0} + 1)
+    )
+    TOTAL_SKIPPED=$((TOTAL_SKIPPED + 1))
+
+    DETAIL_LINES+=(
+      "VM ${vmid} ${VM_NAME[$vmid]}: ${label} - SKIPPED; ${requirement} is not installed"
+    )
+
+    return
+  fi
+
   before=$(
     guest_capture \
       "$vmid" \
@@ -1992,7 +2104,7 @@ run_task() {
     "$command" \
     >"$log" 2>&1
 
-  exit_code=$?
+  rc=$?
 
   after=$(
     guest_capture \
@@ -2001,13 +2113,20 @@ run_task() {
       tr -dc '0-9'
   )
 
-  if (( exit_code == 0 )); then
+  if [[ $task == apt-update ]]; then
+    if ((rc == 0)); then
+      APT_READY["$vmid"]=yes
+    else
+      APT_READY["$vmid"]=no
+    fi
+  fi
+
+  if ((rc == 0)); then
     printf 'OK\n'
 
     TARGET_OK["$target"]=$(
       (${TARGET_OK[$target]:-0} + 1)
     )
-
     TOTAL_OK=$((TOTAL_OK + 1))
 
     DETAIL_LINES+=(
@@ -2019,16 +2138,29 @@ run_task() {
     TARGET_FAILED["$target"]=$(
       (${TARGET_FAILED[$target]:-0} + 1)
     )
-
     TOTAL_FAILED=$((TOTAL_FAILED + 1))
 
-    DETAIL_LINES+=(
-      "VM ${vmid} ${VM_NAME[$vmid]}: ${label} - FAILED (see ${log})"
+    failure_reason=$(
+      tail -n 5 "$log" 2>/dev/null |
+        tr '\n' ' ' |
+        sed -E \
+          's/[[:space:]]+/ /g; s/^ //; s/ $//' |
+        cut -c1-300
     )
+
+    if [[ -n $failure_reason ]]; then
+      DETAIL_LINES+=(
+        "VM ${vmid} ${VM_NAME[$vmid]}: ${label} - FAILED: ${failure_reason} (full log: ${log})"
+      )
+    else
+      DETAIL_LINES+=(
+        "VM ${vmid} ${VM_NAME[$vmid]}: ${label} - FAILED (see ${log})"
+      )
+    fi
   fi
 
-  if [[ $before =~ ^[0-9]+$ ]] &&
-     [[ $after =~ ^[0-9]+$ ]]; then
+  if [[ $before =~ ^[0-9]+$ &&
+    $after =~ ^[0-9]+$ ]]; then
 
     TARGET_RECLAIMED["$target"]=$(
       (${TARGET_RECLAIMED[$target]:-0} + after - before)
@@ -2038,15 +2170,28 @@ run_task() {
 
 restore_started_vms() {
   local vmid
+  local target
 
   for vmid in "${!TEMP_STARTED[@]}"; do
     [[ ${TEMP_STARTED[$vmid]} == temporary ]] ||
       continue
 
-    shutdown_vm "$vmid" ||
+    target="vm-${vmid}"
+
+    printf 'Returning VM %s (%s) to its stopped state...\n' \
+      "$vmid" \
+      "${VM_NAME[$vmid]:-unknown}"
+
+    if ! shutdown_vm "$vmid"; then
       DETAIL_LINES+=(
-        "VM ${vmid}: could not return to its original stopped state"
+        "VM ${vmid}: could not return to stopped state"
       )
+
+      TARGET_FAILED["$target"]=$(
+        (${TARGET_FAILED[$target]:-0} + 1)
+      )
+      TOTAL_FAILED=$((TOTAL_FAILED + 1))
+    fi
 
     unset 'TEMP_STARTED[$vmid]'
   done
@@ -2058,7 +2203,6 @@ handle_interruption() {
     >&2
 
   restore_started_vms
-
   exit 130
 }
 
@@ -2111,7 +2255,8 @@ run_selected_plan() {
 
           continue
           ;;
-        temporary|leave-running)
+
+        temporary | leave-running)
           printf \
             'Starting VM %s (%s)...\n' \
             "$vmid" \
@@ -2147,11 +2292,13 @@ run_selected_plan() {
       TARGET_SKIPPED["$target"]=1
 
       DETAIL_LINES+=(
-        "VM ${vmid}: unsupported guest OS - SKIPPED; a Debian-family system is required"
+        "VM ${vmid}: unsupported guest OS; a Debian-family system is required"
       )
 
       continue
     fi
+
+    APT_READY["$vmid"]=yes
 
     for task in "${SELECTED_TASKS[@]}"; do
       run_task "$vmid" "$task"
@@ -2175,9 +2322,9 @@ finish_report() {
   ended=$(date +%s)
   elapsed=$((ended - RUN_STARTED))
 
-  if (( TOTAL_FAILED > 0 )); then
+  if ((TOTAL_FAILED > 0)); then
     severity=error
-  elif (( TOTAL_SKIPPED > 0 )); then
+  elif ((TOTAL_SKIPPED > 0)); then
     severity=warning
   else
     severity=info
@@ -2186,7 +2333,7 @@ finish_report() {
   if [[ $severity == info ]]; then
     title="SweenLab VM Maintenance: Complete"
   else
-    title="SweenLab VM Maintenance: Attention Needed"
+    title="SweenLab VM Maintenance: Attention"
   fi
 
   summary=$(
@@ -2231,7 +2378,7 @@ finish_report() {
     done
   fi
 
-  (( TOTAL_FAILED == 0 ))
+  ((TOTAL_FAILED == 0))
 }
 
 one_time_run() {
@@ -2258,18 +2405,12 @@ one_time_run() {
   yesno \
     "Run this one-time maintenance plan now?
 
-VMs:
-${SELECTED_VM_IDS[*]}
-
-Tasks:
-${SELECTED_TASKS[*]}
-
-Notifications:
-${PLAN_NOTIFY}" ||
+VMs: ${SELECTED_VM_IDS[*]}
+Tasks: ${SELECTED_TASKS[*]}
+Notifications: ${PLAN_NOTIFY}" ||
     return
 
   clear
-
   run_selected_plan
 }
 
@@ -2282,9 +2423,7 @@ main_menu() {
       whiptail \
         --title "$APP_NAME v${APP_VERSION}" \
         --menu \
-        "Maintain Debian-family VMs through QEMU Guest Agent.
-
-Home Assistant OS and OPNsense are excluded." \
+        "Maintain Debian-family VMs through QEMU Guest Agent." \
         23 "$DIALOG_WIDTH" 9 \
         run "Run one-time maintenance" \
         create "Create a scheduled plan" \
@@ -2302,16 +2441,20 @@ Home Assistant OS and OPNsense are excluded." \
       run)
         one_time_run
         ;;
+
       create)
         create_or_edit_plan
         ;;
+
       view)
         view_plans
         ;;
+
       edit)
         slug=$(select_plan) &&
           create_or_edit_plan "$slug"
         ;;
+
       run-plan)
         slug=$(select_plan) ||
           continue
@@ -2322,15 +2465,19 @@ Home Assistant OS and OPNsense are excluded." \
           run_selected_plan
         fi
         ;;
+
       toggle)
         toggle_plan
         ;;
+
       delete)
         delete_plan
         ;;
+
       notifications)
         notification_center
         ;;
+
       exit)
         break
         ;;
@@ -2362,24 +2509,17 @@ Usage:
 Interactive mode creates and manages one-time and scheduled VM maintenance.
 Scheduled mode is used by systemd and is not intended for manual editing.
 
-Supported guests:
-  Debian
-  Ubuntu
-  Kali Linux
-  Linux Mint
-  Pop!_OS
-  Raspberry Pi OS
-  Other distributions whose ID_LIKE includes debian
+Supported guests include Debian, Ubuntu, Kali Linux, Linux Mint, Pop!_OS,
+Raspberry Pi OS, and other systems whose ID_LIKE includes debian.
 
-Excluded appliances:
-  Home Assistant OS
-  OPNsense
+Home Assistant OS and OPNsense are excluded. Maintain those appliances through
+their supported web interfaces.
 EOF
 }
 
 main() {
   case "${1:-}" in
-    -h|--help)
+    -h | --help)
       usage
       exit 0
       ;;
@@ -2399,12 +2539,14 @@ main() {
 
       scheduled_entry "$2"
       ;;
+
     "")
       ensure_whiptail
       ensure_jq
       calculate_dialog_size
       main_menu
       ;;
+
     *)
       usage
       exit 1
