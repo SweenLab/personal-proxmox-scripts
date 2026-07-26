@@ -25,6 +25,7 @@ Have fun!
 | **Proxmox Task Scheduler** | Create and manage scheduled maintenance tasks using interactive menus. | [View Guide](docs/proxmox-task-scheduler.md) |
 | **Proxmox Health Check** | Perform a comprehensive read-only health assessment of a Proxmox host, including storage, SMART health, package updates, networking, DNS, system services, and an overall health summary. | [View Guide](docs/proxmox-health-check.md) |
 | **Proxmox Host & LXC Maintenance Wizard** | Safely perform guided maintenance on the Proxmox host or Debian/Ubuntu LXC containers with maintenance profiles, progress tracking, automatic logging, and detailed summaries. | [View Guide](docs/proxmox-lxc-maintenance-wizard.md) |
+| **Proxmox VM Maintenance Wizard** | Run and schedule guided maintenance for Debian-family VMs through QEMU Guest Agent with logs, stopped-VM policies, and optional notifications. | [View Guide](docs/proxmox-vm-maintenance-wizard.md) |
 
 ---
 
@@ -68,6 +69,7 @@ Detailed documentation is available in the **docs** directory.
 - 📖 [Proxmox Task Scheduler](docs/proxmox-task-scheduler.md)
 - 📖 [Proxmox Health Check](docs/proxmox-health-check.md)
 - 📖 [Proxmox Host & LXC Maintenance Wizard](docs/proxmox-lxc-maintenance-wizard.md)
+- 📖 [Proxmox VM Maintenance Wizard](docs/proxmox-vm-maintenance-wizard.md)
 
 ---
 
@@ -86,10 +88,10 @@ Version history and release notes are available on the GitHub **Releases** page.
 - ✅ Proxmox Task Scheduler
 - ✅ Proxmox Health Check
 - ✅ Proxmox Host & LXC Maintenance Wizard
+- ✅ Proxmox VM Maintenance Wizard
 
 ## Planned
 
-- 🚧 Proxmox VM Maintenance Wizard
 - 🚧 LXC Setup Wizard
 - 🚧 Docker Installer
 - 🚧 SMART Report Exporter
