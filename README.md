@@ -38,6 +38,9 @@ Have fun!
 - Automatic logging
 - Responsive terminal interface
 - Supports Debian and Ubuntu LXC containers
+- Supports Debian-family VMs through QEMU Guest Agent
+- Uses systemd timers for scheduled jobs
+- Optional notification support where available
 - Designed specifically for Proxmox VE
 
 ---
@@ -52,13 +55,58 @@ git clone https://github.com/SweenLab/personal-proxmox-scripts.git
 
 Or run a script directly from GitHub.
 
-Example:
+## Proxmox Health Check
 
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/SweenLab/personal-proxmox-scripts/main/scripts/proxmox-health-check.sh)
 ```
 
+## Proxmox Task Scheduler
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/SweenLab/personal-proxmox-scripts/main/scripts/proxmox-task-scheduler.sh)
+```
+
+## Proxmox Host & LXC Maintenance Wizard
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/SweenLab/personal-proxmox-scripts/main/scripts/proxmox-lxc-maintenance-wizard.sh)
+```
+
+## Proxmox VM Maintenance Wizard
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/SweenLab/personal-proxmox-scripts/main/scripts/proxmox-vm-maintenance-wizard.sh)
+```
+
 Each script includes its own documentation and usage guide.
+
+Run scripts as **root** on the Proxmox host unless a script guide says otherwise.
+
+---
+
+# VM Maintenance Notes
+
+The **Proxmox VM Maintenance Wizard** is for normal Debian-family Linux VMs.
+
+It supports:
+
+- Debian
+- Ubuntu
+- Kali Linux
+- Linux Mint
+- Pop!_OS
+- Raspberry Pi OS
+- other Debian-like guests with `ID_LIKE=debian`
+
+It requires QEMU Guest Agent inside each target VM.
+
+It intentionally does **not** update appliance-style operating systems such as:
+
+- Home Assistant OS
+- OPNsense
+
+Use those systems' web interfaces and official update guides instead.
 
 ---
 
