@@ -32,19 +32,16 @@ DIALOG_WIDTH=78
 LIST_HEIGHT=12
 
 declare -a VM_IDS=()
-declare -a RUNNING_VM_IDS=()
 declare -a MAINTAINABLE_VM_IDS=()
 declare -a APPLIANCE_VM_IDS=()
 declare -a SELECTED_VM_IDS=()
 declare -a SELECTED_TASKS=()
 declare -a SELECTED_PROVIDERS=()
 declare -a PROFILE_TASKS=()
-declare -a RESULT_LINES=()
 declare -a DETAIL_LINES=()
 
 declare -A VM_NAME=()
 declare -A VM_STATUS=()
-declare -A VM_AGENT=()
 declare -A VM_APPLIANCE=()
 declare -A STOPPED_POLICY=()
 declare -A TEMP_STARTED=()
@@ -60,7 +57,6 @@ PLAN_NAME=""
 PLAN_SLUG=""
 PLAN_REPORT="summary"
 PLAN_NOTIFY="none"
-PLAN_SEVERITIES="info warning error critical"
 PLAN_ENABLED="yes"
 PLAN_CALENDAR=""
 PLAN_TIMEZONE=""
@@ -94,10 +90,6 @@ slugify() {
     cut -c1-48
 }
 
-shell_quote() {
-  printf '%q' "$1"
-}
-
 json_escape() {
   local value=$1
   value=${value//\\/\\\\}
@@ -106,29 +98,6 @@ json_escape() {
   value=${value//$'\r'/\\r}
   value=${value//$'\t'/\\t}
   printf '%s' "$value"
-}
-
-urlencode() {
-  local value=$1 out="" char hex i
-
-  for ((i=0; i<${#value}; i++)); do
-    char=${value:i:1}
-
-    case "$char" in
-      [a-zA-Z0-9.~_-])
-        out+=$char
-        ;;
-      ' ')
-        out+="%20"
-        ;;
-      *)
-        printf -v hex '%%%02X' "'$char"
-        out+=$hex
-        ;;
-    esac
-  done
-
-  printf '%s' "$out"
 }
 
 truncate_text() {
@@ -175,7 +144,7 @@ verify_host() {
     die "systemd is required."
 
   command_exists timeout ||
-    die "GNU timeout is required (normally provided by coreutils)."
+    die "GNU timeout is required."
 }
 
 calculate_dialog_size() {
@@ -190,17 +159,17 @@ calculate_dialog_size() {
   [[ $rows =~ ^[0-9]+$ ]] || rows=24
   [[ $cols =~ ^[0-9]+$ ]] || cols=80
 
-  (( rows >= 18 && cols >= 58 )) ||
+  ((rows >= 18 && cols >= 58)) ||
     die "Enlarge the terminal to at least 18 rows by 58 columns."
 
   DIALOG_HEIGHT=$((rows - 4))
   DIALOG_WIDTH=$((cols - 4))
 
-  (( DIALOG_HEIGHT > 30 )) && DIALOG_HEIGHT=30
-  (( DIALOG_WIDTH > 96 )) && DIALOG_WIDTH=96
+  ((DIALOG_HEIGHT > 30)) && DIALOG_HEIGHT=30
+  ((DIALOG_WIDTH > 96)) && DIALOG_WIDTH=96
 
   LIST_HEIGHT=$((DIALOG_HEIGHT - 9))
-  (( LIST_HEIGHT < 6 )) && LIST_HEIGHT=6
+  ((LIST_HEIGHT < 6)) && LIST_HEIGHT=6
 }
 
 ensure_whiptail() {
@@ -284,41 +253,6 @@ install_self() {
   install -m 755 "$source" "$INSTALL_PATH"
 }
 
-discover_vms() {
-  VM_IDS=()
-  RUNNING_VM_IDS=()
-  MAINTAINABLE_VM_IDS=()
-  APPLIANCE_VM_IDS=()
-
-  local vmid
-  local name
-  local status
-
-  while read -r vmid name status; do
-    [[ $vmid =~ ^[0-9]+$ ]] || continue
-
-    VM_IDS+=("$vmid")
-    VM_NAME["$vmid"]=${name:-unnamed-vm}
-    VM_STATUS["$vmid"]=${status:-unknown}
-    VM_AGENT["$vmid"]="unknown"
-
-    [[ $status == running ]] &&
-      RUNNING_VM_IDS+=("$vmid")
-
-    detect_appliance_vm "$vmid"
-
-    if [[ -n ${VM_APPLIANCE[$vmid]:-} ]]; then
-      APPLIANCE_VM_IDS+=("$vmid")
-    else
-      MAINTAINABLE_VM_IDS+=("$vmid")
-    fi
-  done < <(
-    qm list 2>/dev/null |
-      awk 'NR>1 {print $1, $2, $3}' |
-      sort -n
-  )
-}
-
 detect_appliance_vm() {
   local vmid=$1
   local name=${VM_NAME[$vmid],,}
@@ -340,10 +274,7 @@ detect_appliance_vm() {
   if [[ ${VM_STATUS[$vmid]:-} == running ]] &&
      qm agent "$vmid" ping >/dev/null 2>&1; then
 
-    os_info=$(
-      qm agent "$vmid" get-osinfo 2>/dev/null ||
-        true
-    )
+    os_info=$(qm agent "$vmid" get-osinfo 2>/dev/null || true)
 
     case "${os_info,,}" in
       *home\ assistant*)
@@ -354,6 +285,36 @@ detect_appliance_vm() {
         ;;
     esac
   fi
+}
+
+discover_vms() {
+  VM_IDS=()
+  MAINTAINABLE_VM_IDS=()
+  APPLIANCE_VM_IDS=()
+
+  local vmid
+  local name
+  local status
+
+  while read -r vmid name status; do
+    [[ $vmid =~ ^[0-9]+$ ]] || continue
+
+    VM_IDS+=("$vmid")
+    VM_NAME["$vmid"]=${name:-unnamed-vm}
+    VM_STATUS["$vmid"]=${status:-unknown}
+
+    detect_appliance_vm "$vmid"
+
+    if [[ -n ${VM_APPLIANCE[$vmid]:-} ]]; then
+      APPLIANCE_VM_IDS+=("$vmid")
+    else
+      MAINTAINABLE_VM_IDS+=("$vmid")
+    fi
+  done < <(
+    qm list 2>/dev/null |
+      awk 'NR>1 {print $1, $2, $3}' |
+      sort -n
+  )
 }
 
 show_appliance_notice() {
@@ -370,10 +331,10 @@ show_appliance_notice() {
   whiptail \
     --title "Appliance VMs Excluded" \
     --msgbox \
-    "The following appliance VMs were detected and removed from the maintenance list:
+    "The following appliance VMs were detected and removed:
 ${detected}
 
-They must be maintained through their own supported interfaces:
+They must be updated through their supported interfaces.
 
 Home Assistant OS:
 Settings > System > Updates
@@ -383,23 +344,15 @@ OPNsense:
 System > Firmware > Status
 https://docs.opnsense.org/manual/updates.html
 
-This wizard will not run APT, cleanup, trim, or Docker maintenance inside these VMs." \
+This wizard will not maintain these appliance VMs." \
     "$DIALOG_HEIGHT" "$DIALOG_WIDTH"
 }
 
 agent_available() {
   local vmid=$1
 
-  [[ ${VM_STATUS[$vmid]:-} == running ]] ||
-    return 1
-
-  if qm agent "$vmid" ping >/dev/null 2>&1; then
-    VM_AGENT["$vmid"]="ready"
-    return 0
-  fi
-
-  VM_AGENT["$vmid"]="unavailable"
-  return 1
+  [[ ${VM_STATUS[$vmid]:-} == running ]] || return 1
+  qm agent "$vmid" ping >/dev/null 2>&1
 }
 
 guest_exec() {
@@ -442,13 +395,9 @@ guest_exec() {
       jq -r '.exitcode // 255'
   )
 
-  [[ $guest_exit =~ ^[0-9]+$ ]] ||
-    return 125
+  [[ $guest_exit =~ ^[0-9]+$ ]] || return 125
 
-  if ((guest_exit > 255)); then
-    return 255
-  fi
-
+  ((guest_exit <= 255)) || return 255
   return "$guest_exit"
 }
 
@@ -484,8 +433,7 @@ start_vm() {
   local vmid=$1
   local waited=0
 
-  qm start "$vmid" >/dev/null ||
-    return 1
+  qm start "$vmid" >/dev/null || return 1
 
   while ((waited < 120)); do
     VM_STATUS["$vmid"]=$(
@@ -521,9 +469,7 @@ request_remaining_shutdowns() {
   local vmid
 
   for vmid in "${!TEMP_STARTED[@]}"; do
-    [[ ${TEMP_STARTED[$vmid]} == temporary ]] ||
-      continue
-
+    [[ ${TEMP_STARTED[$vmid]} == temporary ]] || continue
     request_vm_shutdown "$vmid"
   done
 }
@@ -534,8 +480,7 @@ wait_for_pending_shutdowns() {
   local target
   local all_stopped
 
-  ((${#SHUTDOWN_PENDING[@]})) ||
-    return
+  ((${#SHUTDOWN_PENDING[@]})) || return
 
   printf 'Verifying temporarily started VMs are shutting down...\n'
 
@@ -554,8 +499,7 @@ wait_for_pending_shutdowns() {
       fi
     done
 
-    [[ $all_stopped == yes ]] &&
-      return
+    [[ $all_stopped == yes ]] && return
 
     sleep 5
     waited=$((waited + 5))
@@ -565,13 +509,10 @@ wait_for_pending_shutdowns() {
     target="vm-${vmid}"
 
     DETAIL_LINES+=(
-      "VM ${vmid}: shutdown was requested but it did not stop within ${SHUTDOWN_TIMEOUT} seconds"
+      "VM ${vmid}: shutdown was requested but did not finish within ${SHUTDOWN_TIMEOUT} seconds"
     )
 
-    TARGET_FAILED["$target"]=$(
-      (${TARGET_FAILED[$target]:-0} + 1)
-    )
-
+    TARGET_FAILED["$target"]=$(( ${TARGET_FAILED[$target]:-0} + 1 ))
     TOTAL_FAILED=$((TOTAL_FAILED + 1))
   done
 }
@@ -587,7 +528,9 @@ choose_vms() {
   show_appliance_notice
 
   ((${#MAINTAINABLE_VM_IDS[@]})) || {
-    msg "No eligible VMs remain. Home Assistant OS and OPNsense must be maintained through their own web interfaces."
+    msg "No eligible VMs remain.
+
+Home Assistant OS and OPNsense must be maintained through their web interfaces."
     return 1
   }
 
@@ -599,9 +542,7 @@ choose_vms() {
 
   for vmid in "${MAINTAINABLE_VM_IDS[@]}"; do
     state=OFF
-
-    [[ ${VM_STATUS[$vmid]} == running ]] &&
-      state=ON
+    [[ ${VM_STATUS[$vmid]} == running ]] && state=ON
 
     items+=(
       "$vmid"
@@ -665,10 +606,7 @@ set_profile() {
 
   case "$PROFILE" in
     check)
-      PROFILE_TASKS=(
-        apt-update
-        apt-check
-      )
+      PROFILE_TASKS=(apt-update apt-check)
       ;;
     weekly)
       PROFILE_TASKS=(
@@ -711,9 +649,7 @@ set_profile() {
       )
       ;;
     custom)
-      PROFILE_TASKS=(
-        apt-update
-      )
+      PROFILE_TASKS=(apt-update)
       ;;
   esac
 }
@@ -728,8 +664,8 @@ choose_profile() {
       20 "$DIALOG_WIDTH" 6 \
       check "Check only; do not install upgrades" \
       weekly "Updates and routine APT cleanup" \
-      monthly "Weekly tasks plus journal, temp files, and trim" \
-      docker "Weekly tasks plus Docker cleanup" \
+      monthly "Weekly plus journal, temporary files, and trim" \
+      docker "Weekly plus Docker cleanup" \
       full "All supported tasks" \
       custom "Choose tasks manually" \
       3>&1 1>&2 2>&3
@@ -755,33 +691,15 @@ choose_tasks() {
       --checklist \
       "Review the profile. Space changes selections." \
       "$DIALOG_HEIGHT" "$DIALOG_WIDTH" "$LIST_HEIGHT" \
-      apt-update \
-      "Refresh package lists" \
-      "$(profile_state apt-update)" \
-      apt-check \
-      "Report available upgrades only" \
-      "$(profile_state apt-check)" \
-      apt-upgrade \
-      "Install available upgrades" \
-      "$(profile_state apt-upgrade)" \
-      apt-autoremove \
-      "Remove unused packages" \
-      "$(profile_state apt-autoremove)" \
-      apt-clean \
-      "Clean the APT cache" \
-      "$(profile_state apt-clean)" \
-      journal-clean \
-      "Remove journal entries older than ${JOURNAL_RETENTION}" \
-      "$(profile_state journal-clean)" \
-      temp-clean \
-      "Clean temporary files using system policies" \
-      "$(profile_state temp-clean)" \
-      fstrim \
-      "Trim filesystems inside the guest" \
-      "$(profile_state fstrim)" \
-      docker-prune \
-      "Remove unused Docker data (never volumes)" \
-      "$(profile_state docker-prune)" \
+      apt-update "Refresh package lists" "$(profile_state apt-update)" \
+      apt-check "Report available upgrades only" "$(profile_state apt-check)" \
+      apt-upgrade "Install available upgrades" "$(profile_state apt-upgrade)" \
+      apt-autoremove "Remove unused packages" "$(profile_state apt-autoremove)" \
+      apt-clean "Clean the APT cache" "$(profile_state apt-clean)" \
+      journal-clean "Remove journal entries older than ${JOURNAL_RETENTION}" "$(profile_state journal-clean)" \
+      temp-clean "Clean temporary files using system policies" "$(profile_state temp-clean)" \
+      fstrim "Trim filesystems inside the guest" "$(profile_state fstrim)" \
+      docker-prune "Remove unused Docker data (never volumes)" "$(profile_state docker-prune)" \
       3>&1 1>&2 2>&3
   ) || return 1
 
@@ -916,6 +834,10 @@ provider_names() {
   done < <(provider_paths)
 }
 
+providers_exist() {
+  compgen -G "${PROVIDER_DIR}/*.conf" >/dev/null
+}
+
 provider_config_write() {
   local slug=$1
   local name=$2
@@ -949,6 +871,7 @@ provider_config_write() {
 choose_severities() {
   local output
   local severity
+  local values=()
 
   output=$(
     whiptail \
@@ -964,16 +887,12 @@ choose_severities() {
       3>&1 1>&2 2>&3
   ) || return 1
 
-  local values=()
-
   while IFS= read -r severity; do
     [[ -n $severity ]] &&
       values+=("$severity")
   done <<<"$output"
 
-  ((${#values[@]})) ||
-    return 1
-
+  ((${#values[@]})) || return 1
   printf '%s' "${values[*]}"
 }
 
@@ -988,10 +907,11 @@ choose_report_format() {
 }
 
 ensure_apprise() {
-  command_exists apprise &&
-    return 0
+  command_exists apprise && return 0
 
-  yesno "Apprise is not installed. Install it now with apt and pipx?" ||
+  yesno "Apprise is not installed.
+
+Install it now with apt and pipx?" ||
     return 1
 
   apt-get update &&
@@ -1007,17 +927,17 @@ add_provider() {
   local slug
   local severities
   local report
-  local value1
-  local value2
-  local value3
-  local value4
+  local value1=""
+  local value2=""
+  local value3=""
+  local value4=""
 
   type=$(
     whiptail \
       --title "Add Notification Provider" \
       --menu "Choose a provider. No SweenLab backend is used." \
       24 "$DIALOG_WIDTH" 10 \
-      none "No Notifications (do not add a provider)" \
+      none "No Notifications" \
       discord "Discord incoming webhook" \
       slack "Slack incoming webhook" \
       telegram "Telegram bot" \
@@ -1030,34 +950,33 @@ add_provider() {
       3>&1 1>&2 2>&3
   ) || return
 
-  [[ $type == none ]] &&
-    return
+  [[ $type == none ]] && return
 
   if [[ $type == pushover ]]; then
-    while [[ -z ${value1:-} ]]; do
+    while [[ -z $value1 ]]; do
       value1=$(
         input_box \
           "Paste the Pushover Application API Token.
 
-The token will be visible while you enter it and stored in a root-only file."
+The token is visible while entering it and stored in a root-only file."
       ) || return
 
       [[ -n $value1 ]] ||
-        msg "The Pushover Application API Token cannot be blank.
+        msg "The Application API Token cannot be blank.
 
 Press Enter to try again."
     done
 
-    while [[ -z ${value2:-} ]]; do
+    while [[ -z $value2 ]]; do
       value2=$(
         input_box \
           "Paste the Pushover User Key or Group Key.
 
-The key will be visible while you enter it and stored in a root-only file."
+The key is visible while entering it and stored in a root-only file."
       ) || return
 
       [[ -n $value2 ]] ||
-        msg "The Pushover User Key cannot be blank.
+        msg "The User Key cannot be blank.
 
 Press Enter to try again."
     done
@@ -1076,11 +995,8 @@ Press Enter to try again."
     return
   }
 
-  severities=$(choose_severities) ||
-    return
-
-  report=$(choose_report_format) ||
-    return
+  severities=$(choose_severities) || return
+  report=$(choose_report_format) || return
 
   case "$type" in
     discord|slack|webhook)
@@ -1091,12 +1007,13 @@ Press Enter to try again."
 Typing and pasted text are hidden."
       ) || return
 
+      [[ -n $value1 ]] || {
+        msg "A webhook URL is required."
+        return
+      }
+
       provider_config_write \
-        "$slug" \
-        "$name" \
-        "$type" \
-        "$severities" \
-        "$report" \
+        "$slug" "$name" "$type" "$severities" "$report" \
         "WEBHOOK_URL=$value1"
       ;;
     telegram)
@@ -1107,17 +1024,15 @@ Typing and pasted text are hidden."
 Typing and pasted text are hidden."
       ) || return
 
-      value2=$(
-        input_box \
-          "Telegram chat ID:"
-      ) || return
+      value2=$(input_box "Telegram chat ID:") || return
+
+      [[ -n $value1 && -n $value2 ]] || {
+        msg "A bot token and chat ID are required."
+        return
+      }
 
       provider_config_write \
-        "$slug" \
-        "$name" \
-        "$type" \
-        "$severities" \
-        "$report" \
+        "$slug" "$name" "$type" "$severities" "$report" \
         "BOT_TOKEN=$value1" \
         "CHAT_ID=$value2"
       ;;
@@ -1128,31 +1043,22 @@ Typing and pasted text are hidden."
           "https://ntfy.sh"
       ) || return
 
-      value2=$(
-        input_box \
-          "ntfy topic:"
-      ) || return
+      value2=$(input_box "ntfy topic:") || return
+      value3=$(input_box "Optional access token:") || return
 
-      value3=$(
-        input_box \
-          "Optional access token (leave blank if unused):"
-      ) || return
+      [[ -n $value1 && -n $value2 ]] || {
+        msg "An ntfy server URL and topic are required."
+        return
+      }
 
       provider_config_write \
-        "$slug" \
-        "$name" \
-        "$type" \
-        "$severities" \
-        "$report" \
+        "$slug" "$name" "$type" "$severities" "$report" \
         "SERVER_URL=$value1" \
         "TOPIC=$value2" \
         "ACCESS_TOKEN=$value3"
       ;;
     gotify)
-      value1=$(
-        input_box \
-          "Gotify server URL:"
-      ) || return
+      value1=$(input_box "Gotify server URL:") || return
 
       value2=$(
         password_box \
@@ -1161,35 +1067,31 @@ Typing and pasted text are hidden."
 Typing and pasted text are hidden."
       ) || return
 
+      [[ -n $value1 && -n $value2 ]] || {
+        msg "A Gotify server URL and token are required."
+        return
+      }
+
       provider_config_write \
-        "$slug" \
-        "$name" \
-        "$type" \
-        "$severities" \
-        "$report" \
+        "$slug" "$name" "$type" "$severities" "$report" \
         "SERVER_URL=$value1" \
         "APP_TOKEN=$value2"
       ;;
     pushover)
       provider_config_write \
-        "$slug" \
-        "$name" \
-        "$type" \
-        "$severities" \
-        "$report" \
+        "$slug" "$name" "$type" "$severities" "$report" \
         "APP_TOKEN=$value1" \
         "USER_KEY=$value2"
       ;;
     smtp)
       value1=$(
         input_box \
-          "SMTP URL (example smtps://smtp.example.com:465):"
+          "SMTP URL:
+
+Example: smtps://smtp.example.com:465"
       ) || return
 
-      value2=$(
-        input_box \
-          "SMTP username:"
-      ) || return
+      value2=$(input_box "SMTP username:") || return
 
       value3=$(
         password_box \
@@ -1200,17 +1102,18 @@ Typing and pasted text are hidden."
 
       value4=$(
         input_box \
-          "From and recipient separated by a comma:
+          "Sender and recipient separated by a comma:
 
 from@example.com,to@example.com"
       ) || return
 
+      [[ -n $value1 && -n $value4 && $value4 == *,* ]] || {
+        msg "A valid SMTP URL, sender, and recipient are required."
+        return
+      }
+
       provider_config_write \
-        "$slug" \
-        "$name" \
-        "$type" \
-        "$severities" \
-        "$report" \
+        "$slug" "$name" "$type" "$severities" "$report" \
         "SMTP_URL=$value1" \
         "SMTP_USER=$value2" \
         "SMTP_PASS=$value3" \
@@ -1230,22 +1133,27 @@ from@example.com,to@example.com"
 Typing and pasted text are hidden."
       ) || return
 
+      [[ -n $value1 ]] || {
+        msg "An Apprise notification URL is required."
+        return
+      }
+
       provider_config_write \
-        "$slug" \
-        "$name" \
-        "$type" \
-        "$severities" \
-        "$report" \
+        "$slug" "$name" "$type" "$severities" "$report" \
         "APPRISE_URL=$value1"
       ;;
   esac
 
   if test_provider "$slug"; then
-    msg "Test notification sent. Provider saved."
+    msg "Test notification sent successfully.
+
+The provider was saved."
   else
     msg "The provider was saved, but its test failed.
 
-You can edit or remove it from Notification Settings."
+Check its credentials or network connection.
+
+Tests automatically stop after 20 seconds."
   fi
 }
 
@@ -1253,8 +1161,7 @@ load_provider() {
   local slug=$1
   local path="${PROVIDER_DIR}/${slug}.conf"
 
-  [[ -r $path ]] ||
-    return 1
+  [[ -r $path ]] || return 1
 
   unset PROVIDER_NAME
   unset PROVIDER_TYPE
@@ -1286,34 +1193,26 @@ send_provider() {
   local body=$3
   local severity=$4
   local force=${5:-no}
-
-  load_provider "$slug" ||
-    return 1
-
-  if [[ $force != yes ]]; then
-    array_contains \
-      "$severity" \
-      ${PROVIDER_SEVERITIES:-} ||
-      return 0
-  fi
-
   local payload
   local auth=()
   local mail
   local message
+  local result
+
+  load_provider "$slug" || return 1
+
+  if [[ $force != yes ]]; then
+    array_contains "$severity" ${PROVIDER_SEVERITIES:-} ||
+      return 0
+  fi
 
   case "$PROVIDER_TYPE" in
     discord)
       body=$(truncate_text "$body" 1750)
       message="${title}"$'\n\n'"${body}"
+      payload="{\"username\":\"SweenLab\",\"content\":\"$(json_escape "$message")\"}"
 
-      payload="{
-\"username\":\"SweenLab\",
-\"content\":\"$(json_escape "$message")\"
-}"
-
-      curl \
-        -fsS \
+      curl -fsS \
         --connect-timeout 5 \
         --max-time 20 \
         -H 'Content-Type: application/json' \
@@ -1324,13 +1223,9 @@ send_provider() {
     slack)
       body=$(truncate_text "$body" 35000)
       message="*${title}*"$'\n'"${body}"
+      payload="{\"text\":\"$(json_escape "$message")\"}"
 
-      payload="{
-\"text\":\"$(json_escape "$message")\"
-}"
-
-      curl \
-        -fsS \
+      curl -fsS \
         --connect-timeout 5 \
         --max-time 20 \
         -H 'Content-Type: application/json' \
@@ -1341,8 +1236,7 @@ send_provider() {
     telegram)
       body=$(truncate_text "$body" 3800)
 
-      curl \
-        -fsS \
+      curl -fsS \
         --connect-timeout 5 \
         --max-time 20 \
         -X POST \
@@ -1355,13 +1249,9 @@ send_provider() {
       body=$(truncate_text "$body" 3500)
 
       [[ -n ${ACCESS_TOKEN:-} ]] &&
-        auth=(
-          -H
-          "Authorization: Bearer ${ACCESS_TOKEN}"
-        )
+        auth=(-H "Authorization: Bearer ${ACCESS_TOKEN}")
 
-      curl \
-        -fsS \
+      curl -fsS \
         --connect-timeout 5 \
         --max-time 20 \
         "${auth[@]}" \
@@ -1378,8 +1268,7 @@ send_provider() {
     gotify)
       body=$(truncate_text "$body" 15000)
 
-      curl \
-        -fsS \
+      curl -fsS \
         --connect-timeout 5 \
         --max-time 20 \
         -X POST \
@@ -1396,8 +1285,7 @@ send_provider() {
     pushover)
       body=$(truncate_text "$body" 900)
 
-      curl \
-        -fsS \
+      curl -fsS \
         --connect-timeout 5 \
         --max-time 20 \
         -X POST \
@@ -1424,8 +1312,7 @@ send_provider() {
         printf '\r\n%s\r\n' "$body"
       } >"$mail"
 
-      curl \
-        -fsS \
+      curl -fsS \
         --connect-timeout 5 \
         --max-time 30 \
         --url "$SMTP_URL" \
@@ -1436,20 +1323,14 @@ send_provider() {
         --upload-file "$mail" \
         >/dev/null
 
-      local smtp_result=$?
+      result=$?
       rm -f "$mail"
-      return "$smtp_result"
+      return "$result"
       ;;
     webhook)
-      payload="{
-\"source\":\"SweenLab\",
-\"title\":\"$(json_escape "$title")\",
-\"severity\":\"$severity\",
-\"message\":\"$(json_escape "$body")\"
-}"
+      payload="{\"source\":\"SweenLab\",\"title\":\"$(json_escape "$title")\",\"severity\":\"$severity\",\"message\":\"$(json_escape "$body")\"}"
 
-      curl \
-        -fsS \
+      curl -fsS \
         --connect-timeout 5 \
         --max-time 20 \
         -H 'Content-Type: application/json' \
@@ -1458,8 +1339,7 @@ send_provider() {
         >/dev/null
       ;;
     apprise)
-      command_exists apprise ||
-        return 1
+      command_exists apprise || return 1
 
       timeout 30 \
         apprise \
@@ -1489,18 +1369,10 @@ select_existing_provider() {
 
   while IFS= read -r slug; do
     [[ -n $slug ]] &&
-      items+=(
-        "$slug"
-        "$slug"
-      )
+      items+=("$slug" "$slug")
   done < <(provider_names)
 
-  ((${#items[@]})) || {
-    msg "No providers are configured.
-
-Press Enter to continue."
-    return 1
-  }
+  ((${#items[@]})) || return 1
 
   whiptail \
     --title "Notification Providers" \
@@ -1524,7 +1396,7 @@ notification_center() {
         add "Add a provider" \
         test "Test a provider" \
         view "View configured provider names" \
-        edit "Replace a provider's configuration" \
+        edit "Replace a provider configuration" \
         remove "Remove a provider" \
         back "Return to the main menu" \
         3>&1 1>&2 2>&3
@@ -1535,7 +1407,7 @@ notification_center() {
         add_provider
         ;;
       test)
-        if ! slug=$(select_existing_provider); then
+        if ! providers_exist; then
           yesno "No notification providers are configured.
 
 Add one now?" &&
@@ -1544,33 +1416,35 @@ Add one now?" &&
           continue
         fi
 
+        slug=$(select_existing_provider) || continue
+
         if test_provider "$slug"; then
           msg "Test sent successfully."
         else
           msg "The notification test failed.
 
-Check the provider credentials and network connection.
+Check the credentials and network connection.
 
 The test automatically stops after 20 seconds."
         fi
         ;;
       view)
-        msg "Configured providers:
+        if providers_exist; then
+          msg "Configured providers:
 
-$(provider_names | sed 's/^/- /')
-
-Press Enter to continue."
+$(provider_names | sed 's/^/- /')"
+        else
+          msg "No notification providers are configured."
+        fi
         ;;
       edit)
-        slug=$(select_existing_provider) ||
-          continue
+        slug=$(select_existing_provider) || continue
 
         rm -f "${PROVIDER_DIR}/${slug}.conf"
         add_provider
         ;;
       remove)
-        slug=$(select_existing_provider) ||
-          continue
+        slug=$(select_existing_provider) || continue
 
         yesno "Remove provider '${slug}'?" &&
           rm -f "${PROVIDER_DIR}/${slug}.conf"
@@ -1586,6 +1460,7 @@ choose_plan_notifications() {
   local choice
   local output
   local slug
+  local -a items=()
 
   choice=$(
     whiptail \
@@ -1594,28 +1469,16 @@ choose_plan_notifications() {
       "Choose whether this maintenance plan sends reports." \
       16 "$DIALOG_WIDTH" 2 \
       none "No Notifications" \
-      configured "Use selected configured providers" \
+      configured "Use configured providers" \
       3>&1 1>&2 2>&3
   ) || return 1
 
   PLAN_NOTIFY=$choice
   SELECTED_PROVIDERS=()
 
-  [[ $choice == none ]] &&
-    return
+  [[ $choice == none ]] && return
 
-  local -a items=()
-
-  while IFS= read -r slug; do
-    [[ -n $slug ]] &&
-      items+=(
-        "$slug"
-        "$slug"
-        ON
-      )
-  done < <(provider_names)
-
-  if ((${#items[@]} == 0)); then
+  if ! providers_exist; then
     yesno "No notification providers are configured.
 
 Open Notification Settings now?" &&
@@ -1623,6 +1486,11 @@ Open Notification Settings now?" &&
 
     return 1
   fi
+
+  while IFS= read -r slug; do
+    [[ -n $slug ]] &&
+      items+=("$slug" "$slug" ON)
+  done < <(provider_names)
 
   output=$(
     whiptail \
@@ -1640,8 +1508,7 @@ Open Notification Settings now?" &&
       SELECTED_PROVIDERS+=("$slug")
   done <<<"$output"
 
-  ((${#SELECTED_PROVIDERS[@]})) ||
-    return 1
+  ((${#SELECTED_PROVIDERS[@]})) || return 1
 }
 
 detect_timezone() {
@@ -1680,11 +1547,8 @@ choose_calendar() {
 
   case "$frequency" in
     daily)
-      time=$(
-        input_box \
-          "Time (24-hour HH:MM):" \
-          "03:00"
-      ) || return 1
+      time=$(input_box "Time (24-hour HH:MM):" "03:00") ||
+        return 1
 
       PLAN_CALENDAR="*-*-* ${time}:00 ${PLAN_TIMEZONE}"
       ;;
@@ -1704,29 +1568,20 @@ choose_calendar() {
           3>&1 1>&2 2>&3
       ) || return 1
 
-      time=$(
-        input_box \
-          "Time (24-hour HH:MM):" \
-          "03:00"
-      ) || return 1
+      time=$(input_box "Time (24-hour HH:MM):" "03:00") ||
+        return 1
 
       PLAN_CALENDAR="${day} *-*-* ${time}:00 ${PLAN_TIMEZONE}"
       ;;
     monthly)
-      day=$(
-        input_box \
-          "Day of month (1-28):" \
-          "1"
-      ) || return 1
+      day=$(input_box "Day of month (1-28):" "1") ||
+        return 1
 
       [[ $day =~ ^([1-9]|1[0-9]|2[0-8])$ ]] ||
         return 1
 
-      time=$(
-        input_box \
-          "Time (24-hour HH:MM):" \
-          "03:00"
-      ) || return 1
+      time=$(input_box "Time (24-hour HH:MM):" "03:00") ||
+        return 1
 
       PLAN_CALENDAR="*-*-${day} ${time}:00 ${PLAN_TIMEZONE}"
       ;;
@@ -1739,10 +1594,7 @@ choose_calendar() {
       ;;
   esac
 
-  systemd-analyze calendar \
-    "$PLAN_CALENDAR" \
-    >/dev/null 2>&1 || {
-
+  systemd-analyze calendar "$PLAN_CALENDAR" >/dev/null 2>&1 || {
     msg "The schedule is not valid:
 
 ${PLAN_CALENDAR}"
@@ -1784,8 +1636,7 @@ load_plan() {
   local vmid
   local var
 
-  [[ -r $path ]] ||
-    return 1
+  [[ -r $path ]] || return 1
 
   # Root-owned configuration generated by this script.
   # shellcheck disable=SC1090
@@ -1807,9 +1658,7 @@ plan_names() {
   local file
 
   for file in "$PLAN_DIR"/*.conf; do
-    [[ -e $file ]] ||
-      continue
-
+    [[ -e $file ]] || continue
     basename "$file" .conf
   done
 }
@@ -1820,10 +1669,7 @@ select_plan() {
 
   while IFS= read -r slug; do
     [[ -n $slug ]] &&
-      items+=(
-        "$slug"
-        "$slug"
-      )
+      items+=("$slug" "$slug")
   done < <(plan_names)
 
   ((${#items[@]})) || {
@@ -1843,9 +1689,7 @@ write_units() {
   local slug=$1
   local conf="${PLAN_DIR}/${slug}.conf"
 
-  load_plan "$slug" ||
-    return 1
-
+  load_plan "$slug" || return 1
   install_self
 
   cat >"${SYSTEMD_DIR}/${UNIT_PREFIX}-${slug}.service" <<EOF
@@ -1892,30 +1736,16 @@ create_or_edit_plan() {
   local existing=${1:-}
 
   if [[ -n $existing ]]; then
-    load_plan "$existing" ||
-      return
-
+    load_plan "$existing" || return
     discover_vms
   else
-    choose_vms ||
-      return
-
+    choose_vms || return
     choose_stopped_policies
-
-    choose_profile ||
-      return
-
-    choose_tasks ||
-      return
-
-    choose_plan_notifications ||
-      return
-
-    PLAN_REPORT=$(choose_report_format) ||
-      return
-
-    choose_calendar ||
-      return
+    choose_profile || return
+    choose_tasks || return
+    choose_plan_notifications || return
+    PLAN_REPORT=$(choose_report_format) || return
+    choose_calendar || return
 
     PLAN_NAME=$(
       input_box \
@@ -1936,25 +1766,13 @@ create_or_edit_plan() {
 
     PLAN_SLUG=$existing
 
-    choose_vms ||
-      return
-
+    choose_vms || return
     choose_stopped_policies
-
-    choose_profile ||
-      return
-
-    choose_tasks ||
-      return
-
-    choose_plan_notifications ||
-      return
-
-    PLAN_REPORT=$(choose_report_format) ||
-      return
-
-    choose_calendar ||
-      return
+    choose_profile || return
+    choose_tasks || return
+    choose_plan_notifications || return
+    PLAN_REPORT=$(choose_report_format) || return
+    choose_calendar || return
   fi
 
   [[ -n $PLAN_SLUG ]] || {
@@ -1989,11 +1807,8 @@ toggle_plan() {
   local slug
   local state
 
-  slug=$(select_plan) ||
-    return
-
-  load_plan "$slug" ||
-    return
+  slug=$(select_plan) || return
+  load_plan "$slug" || return
 
   if systemctl is-enabled \
        --quiet \
@@ -2027,11 +1842,8 @@ toggle_plan() {
 delete_plan() {
   local slug
 
-  slug=$(select_plan) ||
-    return
-
-  yesno "Delete scheduled plan '${slug}'?" ||
-    return
+  slug=$(select_plan) || return
+  yesno "Delete scheduled plan '${slug}'?" || return
 
   systemctl disable \
     --now \
@@ -2051,16 +1863,14 @@ delete_plan() {
 
 prepare_run() {
   local label=$1
+  local count=0
+  local vmid
 
   RUN_STARTED=$(date +%s)
-
-  RUN_DIR="${LOG_ROOT}/$(
-    date '+%Y%m%d-%H%M%S'
-  )-${label}"
+  RUN_DIR="${LOG_ROOT}/$(date '+%Y%m%d-%H%M%S')-${label}"
 
   install -d -m 750 "$RUN_DIR"
 
-  RESULT_LINES=()
   DETAIL_LINES=()
   TARGET_OK=()
   TARGET_FAILED=()
@@ -2075,9 +1885,6 @@ prepare_run() {
   TOTAL_SKIPPED=0
   CURRENT_STEP=0
 
-  local count=0
-  local vmid
-
   for vmid in "${SELECTED_VM_IDS[@]}"; do
     if [[ ${STOPPED_POLICY[$vmid]:-skip} == skip &&
           ${VM_STATUS[$vmid]:-stopped} != running ]]; then
@@ -2087,9 +1894,7 @@ prepare_run() {
     count=$((count + 1))
   done
 
-  TOTAL_STEPS=$(
-    (count * ${#SELECTED_TASKS[@]})
-  )
+  TOTAL_STEPS=$((count * ${#SELECTED_TASKS[@]}))
 }
 
 run_task() {
@@ -2106,10 +1911,7 @@ run_task() {
   local failure_reason
 
   label=$(task_label "$task")
-
-  command=$(task_command "$task") ||
-    return
-
+  command=$(task_command "$task") || return
   log="${RUN_DIR}/${target}-${task}.log"
 
   CURRENT_STEP=$((CURRENT_STEP + 1))
@@ -2129,10 +1931,7 @@ run_task() {
 
     printf 'SKIPPED\n'
 
-    TARGET_SKIPPED["$target"]=$(
-      (${TARGET_SKIPPED[$target]:-0} + 1)
-    )
-
+    TARGET_SKIPPED["$target"]=$(( ${TARGET_SKIPPED[$target]:-0} + 1 ))
     TOTAL_SKIPPED=$((TOTAL_SKIPPED + 1))
 
     DETAIL_LINES+=(
@@ -2142,18 +1941,12 @@ run_task() {
     return
   fi
 
-  if requirement=$(
-    task_requirement "$task" 2>/dev/null
-  ) &&
+  if requirement=$(task_requirement "$task" 2>/dev/null) &&
      ! guest_has_command "$vmid" "$requirement"; then
 
-    printf 'SKIPPED (%s is not installed)\n' \
-      "$requirement"
+    printf 'SKIPPED (%s is not installed)\n' "$requirement"
 
-    TARGET_SKIPPED["$target"]=$(
-      (${TARGET_SKIPPED[$target]:-0} + 1)
-    )
-
+    TARGET_SKIPPED["$target"]=$(( ${TARGET_SKIPPED[$target]:-0} + 1 ))
     TOTAL_SKIPPED=$((TOTAL_SKIPPED + 1))
 
     DETAIL_LINES+=(
@@ -2170,11 +1963,7 @@ run_task() {
       tr -dc '0-9'
   )
 
-  guest_exec \
-    "$vmid" \
-    "$command" \
-    >"$log" 2>&1
-
+  guest_exec "$vmid" "$command" >"$log" 2>&1
   rc=$?
 
   after=$(
@@ -2195,10 +1984,7 @@ run_task() {
   if ((rc == 0)); then
     printf 'OK\n'
 
-    TARGET_OK["$target"]=$(
-      (${TARGET_OK[$target]:-0} + 1)
-    )
-
+    TARGET_OK["$target"]=$(( ${TARGET_OK[$target]:-0} + 1 ))
     TOTAL_OK=$((TOTAL_OK + 1))
 
     DETAIL_LINES+=(
@@ -2207,17 +1993,13 @@ run_task() {
   else
     printf 'FAILED\n'
 
-    TARGET_FAILED["$target"]=$(
-      (${TARGET_FAILED[$target]:-0} + 1)
-    )
-
+    TARGET_FAILED["$target"]=$(( ${TARGET_FAILED[$target]:-0} + 1 ))
     TOTAL_FAILED=$((TOTAL_FAILED + 1))
 
     failure_reason=$(
       tail -n 5 "$log" 2>/dev/null |
         tr '\n' ' ' |
-        sed -E \
-          's/[[:space:]]+/ /g; s/^ //; s/ $//' |
+        sed -E 's/[[:space:]]+/ /g; s/^ //; s/ $//' |
         cut -c1-300
     )
 
@@ -2235,14 +2017,12 @@ run_task() {
   if [[ $before =~ ^[0-9]+$ &&
         $after =~ ^[0-9]+$ ]]; then
 
-    TARGET_RECLAIMED["$target"]=$(
-      (${TARGET_RECLAIMED[$target]:-0} + after - before)
-    )
+    TARGET_RECLAIMED["$target"]=$(( ${TARGET_RECLAIMED[$target]:-0} + after - before ))
   fi
 }
 
 handle_interruption() {
-  printf '\nMaintenance was interrupted. Requesting shutdowns for temporarily started VMs...\n' >&2
+  printf '\nMaintenance interrupted. Requesting shutdowns for temporarily started VMs...\n' >&2
 
   request_remaining_shutdowns
   wait_for_pending_shutdowns
@@ -2404,8 +2184,7 @@ finish_report() {
 
   if [[ ${PLAN_NOTIFY:-none} == configured ]]; then
     for slug in "${SELECTED_PROVIDERS[@]}"; do
-      load_provider "$slug" ||
-        continue
+      load_provider "$slug" || continue
 
       body=$summary
 
@@ -2430,22 +2209,12 @@ one_time_run() {
   PLAN_NAME="One-time VM Maintenance"
   PLAN_SLUG="one-time"
 
-  choose_vms ||
-    return
-
+  choose_vms || return
   choose_stopped_policies
-
-  choose_profile ||
-    return
-
-  choose_tasks ||
-    return
-
-  choose_plan_notifications ||
-    return
-
-  PLAN_REPORT=$(choose_report_format) ||
-    return
+  choose_profile || return
+  choose_tasks || return
+  choose_plan_notifications || return
+  PLAN_REPORT=$(choose_report_format) || return
 
   yesno "Run this one-time maintenance plan now?
 
@@ -2496,8 +2265,7 @@ main_menu() {
           create_or_edit_plan "$slug"
         ;;
       run-plan)
-        slug=$(select_plan) ||
-          continue
+        slug=$(select_plan) || continue
 
         load_plan "$slug" &&
           PLAN_SOURCE=interactive && {
