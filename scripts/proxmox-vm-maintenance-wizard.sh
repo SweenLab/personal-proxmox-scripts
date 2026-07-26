@@ -15,7 +15,7 @@ if (( BASH_VERSINFO[0] < 4 )); then
 fi
 
 readonly APP_NAME="Proxmox VM Maintenance Wizard"
-readonly APP_VERSION="1.2.4"
+readonly APP_VERSION="1.2.5"
 readonly INSTALL_PATH="/usr/local/sbin/proxmox-vm-maintenance-wizard"
 readonly CONFIG_ROOT="/etc/sweenlab/vm-maintenance"
 readonly PLAN_DIR="${CONFIG_ROOT}/plans"
@@ -533,21 +533,6 @@ set_profile() {
   esac
 }
 
-choose_profile() {
-  local choice
-  choice=$(whiptail --title "Maintenance Profile" --menu \
-    "Choose a starting profile. Tasks can be changed next." \
-    20 "$DIALOG_WIDTH" 6 \
-    check "Check only; do not install upgrades" \
-    weekly "Updates and routine APT cleanup" \
-    monthly "Weekly tasks plus journal, temp files, and trim" \
-    docker "Weekly tasks plus Docker cleanup" \
-    full "All supported tasks" \
-    custom "Choose tasks manually" \
-    3>&1 1>&2 2>&3) || return 1
-  set_profile "$choice"
-}
-
 profile_state() {
   array_contains "$1" "${PROFILE_TASKS[@]}" && printf ON || printf OFF
 }
@@ -555,7 +540,7 @@ profile_state() {
 choose_tasks() {
   local output task
   output=$(whiptail --title "Select Maintenance Tasks" --separate-output \
-    --checklist "Review the profile. Space changes selections." \
+    --checklist "Choose what maintenance should run. Space selects or unselects." \
     "$DIALOG_HEIGHT" "$DIALOG_WIDTH" "$LIST_HEIGHT" \
     apt-update "Refresh package lists" "$(profile_state apt-update)" \
     apt-check "Report available upgrades only" "$(profile_state apt-check)" \
@@ -1088,7 +1073,7 @@ create_or_edit_plan() {
   else
     choose_vms || return
     choose_stopped_policies
-    choose_profile || return
+    set_profile full
     choose_tasks || return
     choose_plan_notifications || return
     PLAN_REPORT=$(choose_report_format) || return
@@ -1102,7 +1087,7 @@ create_or_edit_plan() {
     PLAN_SLUG=$existing
     choose_vms || return
     choose_stopped_policies
-    choose_profile || return
+    PROFILE_TASKS=("${SELECTED_TASKS[@]}")
     choose_tasks || return
     choose_plan_notifications || return
     PLAN_REPORT=$(choose_report_format) || return
@@ -1344,7 +1329,7 @@ one_time_run() {
 
     choose_vms || return
     choose_stopped_policies
-    choose_profile || return
+    set_profile full
     choose_tasks || return
     choose_plan_notifications || return
     PLAN_REPORT=$(choose_report_format) || return
