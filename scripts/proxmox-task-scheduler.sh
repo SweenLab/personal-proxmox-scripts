@@ -47,6 +47,9 @@ require_commands() {
     timedatectl \
     base64 \
     ssh \
+    pct \
+    qm \
+    awk \
     sed \
     tr \
     grep; do
@@ -466,202 +469,125 @@ write_metadata() {
   chmod 600 "$path"
 }
 
-add_task() {
-  local task_type=""
-  local task_name=""
-  local description=""
-  local target="local"
-  local command_text=""
-  local timezone=""
-  local calendar=""
-  local slug
-  local service_name=""
-  local backup_target="all"
-  local step=1
-  local confirmation
-  local height width
+guest_choices() {
+  local kind=$1
+  local id status name line
+  local -a fields=()
 
-  while (( step <= 7 )); do
-    case "$step" in
-      1)
-        task_type=$(choose_task_type)
-        [[ $task_type == "back" ]] && return 0
-        description=""
-        calendar=""
-        step=2
-        ;;
+  if [[ $kind == "lxc" ]]; then
+    while IFS= read -r line; do
+      read -r -a fields <<<"$line"
+      id=${fields[0]:-}
+      [[ $id =~ ^[0-9]+$ ]] || continue
+      status=${fields[1]:-unknown}
+      name=${fields[${#fields[@]}-1]:-LXC $id}
+      printf '%s\n%s (%s)\n' "$id" "${name:-LXC $id}" "$status"
+    done < <(pct list 2>/dev/null)
+  else
+    while read -r id name status _; do
+      [[ $id =~ ^[0-9]+$ ]] || continue
+      printf '%s\n%s (%s)\n' "$id" "${name:-VM $id}" "$status"
+    done < <(qm list 2>/dev/null)
+  fi
+}
 
-      2)
-        case "$task_type" in
-          update)
-            task_name="Package Update"
-            command_text="apt-get update && apt-get -y full-upgrade"
-            step=3
-            ;;
-          reboot)
-            task_name="Reboot"
-            command_text="systemctl reboot"
-            step=3
-            ;;
-          restart-service)
-            task_name="Service Restart"
-            service_name=$(input_box \
-              "Enter the systemd service name to restart.
+select_guests() {
+  local kind=$1
+  local label=$2
+  local -a choices=("all" "Select all $label" OFF)
+  local -a discovered=()
+  local id description
 
-Examples: pveproxy, docker, ssh" "$service_name") || { step=1; continue; }
-            if [[ $service_name =~ ^[A-Za-z0-9@_.:-]+$ ]]; then
-              command_text="systemctl restart -- $service_name"
-              step=3
-            else
-              message_box "Use a valid systemd service name."
-            fi
-            ;;
-          backup)
-            task_name="Proxmox Backup"
-            backup_target=$(input_box \
-              "Enter one VM/CT ID to back up, or enter all.
+  mapfile -t discovered < <(guest_choices "$kind")
+  if ((${#discovered[@]} == 0)); then
+    message_box "No $label were found on this Proxmox host."
+    return 1
+  fi
 
-The backup uses snapshot mode and your configured default storage." \
-              "$backup_target") || { step=1; continue; }
-            if [[ $backup_target == "all" ]]; then
-              command_text="vzdump --all 1 --mode snapshot"
-              step=3
-            elif [[ $backup_target =~ ^[0-9]+$ ]]; then
-              command_text="vzdump $backup_target --mode snapshot"
-              step=3
-            else
-              message_box "Enter one numeric VM/CT ID or all."
-            fi
-            ;;
-          custom)
-            task_name="Custom Command"
-            command_text=$(input_box \
-              "Enter the command exactly as it should run.
-
-Passwords and other secrets should not be placed here." \
-              "$command_text") || { step=1; continue; }
-            if [[ -n $command_text ]]; then
-              step=3
-            else
-              message_box "A command is required."
-            fi
-            ;;
-        esac
-        ;;
-
-      3)
-        description=$(input_box \
-          "Enter a short description for this task." \
-          "${description:-$task_name}") || {
-          if [[ $task_type == "update" || $task_type == "reboot" ]]; then
-            step=1
-          else
-            step=2
-          fi
-          continue
-        }
-        slug=$(make_slug "$description")
-        if [[ -z $description || -z $slug ]]; then
-          message_box "The description needs at least one letter or number."
-        elif [[ -e "$CONFIG_DIR/$slug.conf" ||
-                -e "$SYSTEMD_DIR/$UNIT_PREFIX-$slug.timer" ]]; then
-          message_box "A task named '$slug' already exists.
-
-Use a different description."
-        else
-          step=4
-        fi
-        ;;
-
-      4)
-        target=$(input_box \
-          "Where should the command run?
-
-Use local for the Proxmox host, or enter an SSH destination such as root@10.10.10.201." \
-          "$target") || { step=3; continue; }
-        if ! validate_target "$target"; then
-          message_box "Use local or a destination such as root@10.10.10.201."
-        elif ! test_ssh_target "$target"; then
-          message_box "Passwordless SSH is not ready for $target.
-
-Run ssh-copy-id $target and test ssh $target true first."
-        else
-          step=5
-        fi
-        ;;
-
-      5)
-        timezone=$(choose_timezone "${timezone:-$(detect_timezone)}") || {
-          step=4
-          continue
-        }
-        step=6
-        ;;
-
-      6)
-        calendar=$(choose_schedule "$timezone" "$task_name") || {
-          step=5
-          continue
-        }
-        step=7
-        ;;
-
-      7)
-        confirmation=$(printf \
-          'Description: %s\nTarget: %s\nTimezone: %s\nSchedule: %s\nCommand: %s' \
-          "$description" "$target" "$timezone" "$calendar" "$command_text")
-        read -r height width < <(dialog_size 20 86)
-        if whiptail \
-          --title "$APP_NAME" \
-          --yes-button "Create" \
-          --no-button "Back" \
-          --yesno "Create this task?
-
-$confirmation" "$height" "$width"; then
-          step=8
-        else
-          step=6
-        fi
-        ;;
-    esac
+  while ((${#discovered[@]})); do
+    id=${discovered[0]}
+    description=${discovered[1]}
+    choices+=("$id" "$description" OFF)
+    discovered=("${discovered[@]:2}")
   done
 
-  local command_b64
-  local runner_path
-  local service_path
-  local timer_path
-  local metadata_path
+  choose_multiple \
+    "$APP_NAME - Select $label" \
+    "Select the $label you would like to schedule, or choose Select all for a bulk task." \
+    "${choices[@]}"
+}
 
-  command_b64=$(
-    printf '%s' "$command_text" |
-      base64 |
-      tr -d '\n'
-  )
+select_all_guests() {
+  local -a choices=("all" "All LXCs and VMs" OFF)
+  local -a discovered=()
+  local id description
 
+  mapfile -t discovered < <(guest_choices lxc)
+  while ((${#discovered[@]})); do
+    id=${discovered[0]}
+    description=${discovered[1]}
+    choices+=("lxc:$id" "LXC $description" OFF)
+    discovered=("${discovered[@]:2}")
+  done
+
+  mapfile -t discovered < <(guest_choices vm)
+  while ((${#discovered[@]})); do
+    id=${discovered[0]}
+    description=${discovered[1]}
+    choices+=("vm:$id" "VM $description" OFF)
+    discovered=("${discovered[@]:2}")
+  done
+
+  ((${#choices[@]} > 3)) || {
+    message_box "No LXCs or VMs were found on this Proxmox host."
+    return 1
+  }
+
+  choose_multiple \
+    "$APP_NAME - Select Guests" \
+    "Select guests, or choose All LXCs and VMs." \
+    "${choices[@]}"
+}
+
+ask_bulk() {
+  local label=$1
+  simple_menu "$APP_NAME - Scheduling Method" \
+    "How should the selected $label be scheduled?" \
+    together "Run all selected items together" \
+    individually "Set a separate schedule for each item"
+}
+
+create_scheduled_task() {
+  local description=$1
+  local command_text=$2
+  local timezone=$3
+  local calendar=$4
+  local slug
+  local suffix=2
+  local command_b64 runner_path service_path timer_path metadata_path safe_description
+
+  slug=$(make_slug "$description")
+  while [[ -e "$CONFIG_DIR/$slug.conf" ||
+           -e "$SYSTEMD_DIR/$UNIT_PREFIX-$slug.timer" ]]; do
+    slug="$(make_slug "$description")-$suffix"
+    ((suffix += 1))
+  done
+
+  command_b64=$(printf '%s' "$command_text" | base64 | tr -d '\n')
   runner_path="$JOB_DIR/$slug.sh"
   service_path="$SYSTEMD_DIR/$UNIT_PREFIX-$slug.service"
   timer_path="$SYSTEMD_DIR/$UNIT_PREFIX-$slug.timer"
   metadata_path="$CONFIG_DIR/$slug.conf"
 
   {
-    printf '%s\n' '#!/usr/bin/env bash'
-    printf '%s\n' 'set -Eeuo pipefail'
-    printf 'readonly TARGET=%q\n' "$target"
+    printf '%s\n' '#!/usr/bin/env bash' 'set -Eeuo pipefail'
     printf 'readonly COMMAND_B64=%q\n' "$command_b64"
-    printf '%s\n' 'if [[ $TARGET == local ]]; then'
-    printf '%s\n' \
-      '  printf "%s" "$COMMAND_B64" | base64 --decode | /bin/bash'
-    printf '%s\n' 'else'
-    printf '%s\n' \
-      '  printf "%s" "$COMMAND_B64" | base64 --decode | /usr/bin/ssh -o BatchMode=yes -o ConnectTimeout=30 "$TARGET" /bin/bash'
-    printf '%s\n' 'fi'
+    printf '%s\n' 'printf "%s" "$COMMAND_B64" | base64 --decode | /bin/bash'
   } >"$runner_path"
-
   chmod 700 "$runner_path"
 
-  local safe_description=${description//$'\n'/ }
+  safe_description=${description//$'\n'/ }
   safe_description=${safe_description//%/%%}
-
   cat >"$service_path" <<EOF
 [Unit]
 Description=Scheduled task: $safe_description
@@ -686,30 +612,233 @@ Unit=$UNIT_PREFIX-$slug.service
 WantedBy=timers.target
 EOF
 
-  write_metadata \
-    "$metadata_path" \
-    "$description" \
-    "$target" \
-    "$calendar" \
-    "$timezone"
-
+  write_metadata "$metadata_path" "$description" "local" "$calendar" "$timezone"
   systemctl daemon-reload
-  systemctl enable --now "$UNIT_PREFIX-$slug.timer"
+  systemctl enable --now "$UNIT_PREFIX-$slug.timer" >/dev/null
+}
 
-  local next_run
+contains_selection() {
+  local needle=$1
+  shift
+  local item
+  for item in "$@"; do
+    [[ $item == "$needle" ]] && return 0
+  done
+  return 1
+}
 
-  next_run=$(
-    systemd-analyze calendar "$calendar" 2>/dev/null ||
-      true
-  )
+simple_menu() {
+  local title=$1
+  local prompt=$2
+  shift 2
+  local height width menu_height
+  read -r height width < <(dialog_size 18 78)
+  menu_height=$((height - 8))
+  ((menu_height < 1)) && menu_height=1
 
-  message_box \
-    "Task created successfully.
+  whiptail \
+    --title "$title" \
+    --cancel-button "Back" \
+    --menu "$prompt" "$height" "$width" "$menu_height" \
+    "$@" \
+    3>&1 1>&2 2>&3
+}
 
-Name: $slug
-Timezone: $timezone
+select_reboot_targets() {
+  local -a choices=(host "Proxmox host (must be selected alone)" OFF)
+  local -a discovered=()
+  local id description
 
-$next_run"
+  mapfile -t discovered < <(guest_choices lxc)
+  while ((${#discovered[@]})); do
+    id=${discovered[0]}; description=${discovered[1]}
+    choices+=("lxc:$id" "LXC $description" OFF)
+    discovered=("${discovered[@]:2}")
+  done
+  mapfile -t discovered < <(guest_choices vm)
+  while ((${#discovered[@]})); do
+    id=${discovered[0]}; description=${discovered[1]}
+    choices+=("vm:$id" "VM $description" OFF)
+    discovered=("${discovered[@]:2}")
+  done
+
+  choose_multiple "$APP_NAME - Reboot" \
+    "Select the host, LXCs, or VMs to reboot. The host cannot be combined with guests." \
+    "${choices[@]}"
+}
+
+select_services() {
+  choose_multiple "$APP_NAME - Restart Services" \
+    "Select one or more services to restart." \
+    ssh "SSH server" OFF \
+    pveproxy "Proxmox web proxy" OFF \
+    pvedaemon "Proxmox API daemon" OFF \
+    pvestatd "Proxmox status daemon" OFF \
+    pve-cluster "Proxmox cluster filesystem" OFF \
+    corosync "Corosync cluster service" OFF \
+    custom "Custom systemd service" OFF
+}
+
+completion_menu() {
+  simple_menu "$APP_NAME - Tasks Created" \
+    "The selected tasks were scheduled successfully. What would you like to do?" \
+    back "Back to Add options" \
+    main "Return to main menu" \
+    exit "Exit scheduler"
+}
+
+add_task() {
+  local task_type timezone target_type selection item id service custom_service
+  local description command_text calendar post_action bulk_choice
+  local -a selected=()
+  local -a commands=()
+  local -a descriptions=()
+  local -a calendars=()
+
+  while true; do
+    task_type=$(choose_task_type)
+    [[ $task_type == "back" ]] && return 0
+    selected=()
+    commands=()
+    descriptions=()
+    calendars=()
+
+    case "$task_type" in
+      update)
+        target_type=$(simple_menu "$APP_NAME - Package Updates" \
+          "What should receive package updates?" \
+          host "Proxmox host" lxc "LXCs" vm "VMs") || continue
+        if [[ $target_type == host ]]; then
+          descriptions=("Host Package Update")
+          commands=("apt-get update && apt-get -y full-upgrade")
+        else
+          selection=$(select_guests "$target_type" "$([[ $target_type == lxc ]] && printf LXCs || printf VMs)") || continue
+          [[ -n $selection ]] && mapfile -t selected <<<"$selection"
+          ((${#selected[@]})) || { message_box "Select at least one guest."; continue; }
+          if contains_selection all "${selected[@]}"; then
+            if [[ $target_type == lxc ]]; then
+              descriptions=("Update All LXCs")
+              commands=('pct list | awk '\''NR > 1 {print $1}'\'' | while read -r id; do pct exec "$id" -- bash -lc '\''apt-get update && apt-get -y full-upgrade'\''; done')
+            else
+              descriptions=("Update All VMs")
+              commands=('qm list | awk '\''NR > 1 {print $1}'\'' | while read -r id; do qm guest exec "$id" -- /bin/bash -lc '\''apt-get update && apt-get -y full-upgrade'\''; done')
+            fi
+          else
+            for id in "${selected[@]}"; do
+              if [[ $target_type == lxc ]]; then
+                descriptions+=("Update LXC $id")
+                commands+=("pct exec $id -- bash -lc 'apt-get update && apt-get -y full-upgrade'")
+              else
+                descriptions+=("Update VM $id")
+                commands+=("qm guest exec $id -- /bin/bash -lc 'apt-get update && apt-get -y full-upgrade'")
+              fi
+            done
+          fi
+        fi
+        ;;
+
+      reboot)
+        selection=$(select_reboot_targets) || continue
+        [[ -n $selection ]] && mapfile -t selected <<<"$selection"
+        ((${#selected[@]})) || { message_box "Select at least one target."; continue; }
+        if contains_selection host "${selected[@]}"; then
+          ((${#selected[@]} == 1)) || { message_box "Host cannot be combined with LXC or VM reboots."; continue; }
+          descriptions=("Reboot Proxmox Host")
+          commands=("systemctl reboot")
+        else
+          for item in "${selected[@]}"; do
+            id=${item#*:}
+            if [[ $item == lxc:* ]]; then
+              descriptions+=("Reboot LXC $id")
+              commands+=("pct reboot $id")
+            else
+              descriptions+=("Reboot VM $id")
+              commands+=("qm reboot $id")
+            fi
+          done
+        fi
+        ;;
+
+      restart-service)
+        selection=$(select_services) || continue
+        [[ -n $selection ]] && mapfile -t selected <<<"$selection"
+        ((${#selected[@]})) || { message_box "Select at least one service."; continue; }
+        if contains_selection custom "${selected[@]}"; then
+          custom_service=$(input_box "Enter the custom systemd service name." "") || continue
+          [[ $custom_service =~ ^[A-Za-z0-9@_.:-]+$ ]] || { message_box "Use a valid systemd service name."; continue; }
+        fi
+        for service in "${selected[@]}"; do
+          [[ $service == custom ]] && service=$custom_service
+          descriptions+=("Restart $service Service")
+          commands+=("systemctl restart -- $service")
+        done
+        ;;
+
+      backup)
+        selection=$(select_all_guests) || continue
+        [[ -n $selection ]] && mapfile -t selected <<<"$selection"
+        ((${#selected[@]})) || { message_box "Select at least one guest."; continue; }
+        if contains_selection all "${selected[@]}"; then
+          descriptions=("Backup All LXCs and VMs")
+          commands=("vzdump --all 1 --mode snapshot")
+        else
+          for item in "${selected[@]}"; do
+            id=${item#*:}
+            if [[ $item == lxc:* ]]; then
+              descriptions+=("Backup LXC $id")
+            else
+              descriptions+=("Backup VM $id")
+            fi
+            commands+=("vzdump $id --mode snapshot")
+          done
+        fi
+        ;;
+
+      custom)
+        command_text=$(input_box \
+          "Enter the command exactly as it should run.
+
+Passwords and other secrets should not be placed here." "") || continue
+        [[ -n $command_text ]] || { message_box "A command is required."; continue; }
+        description=$(input_box "Enter a short description for this task." "Custom Command") || continue
+        [[ -n $(make_slug "$description") ]] || { message_box "A description is required."; continue; }
+        descriptions=("$description")
+        commands=("$command_text")
+        ;;
+    esac
+
+    timezone=$(choose_timezone "$(detect_timezone)") || continue
+
+    if ((${#commands[@]} == 1)); then
+      calendar=$(choose_schedule "$timezone" "${descriptions[0]}") || continue
+      create_scheduled_task "${descriptions[0]}" "${commands[0]}" "$timezone" "$calendar"
+    else
+      bulk_choice=$(ask_bulk "tasks") || continue
+      if [[ $bulk_choice == together ]]; then
+        command_text=$(printf '%s\n' "${commands[@]}")
+        description="Bulk ${descriptions[0]} and Selected Tasks"
+        calendar=$(choose_schedule "$timezone" "$description") || continue
+        create_scheduled_task "$description" "$command_text" "$timezone" "$calendar"
+      else
+        for ((id = 0; id < ${#commands[@]}; id++)); do
+          calendar=$(choose_schedule "$timezone" "${descriptions[id]}") || break
+          calendars+=("$calendar")
+        done
+        ((id == ${#commands[@]})) || continue
+        for ((id = 0; id < ${#commands[@]}; id++)); do
+          create_scheduled_task \
+            "${descriptions[id]}" "${commands[id]}" "$timezone" "${calendars[id]}"
+        done
+      fi
+    fi
+
+    post_action=$(completion_menu) || return 0
+    case "$post_action" in
+      back) continue ;;
+      main) return 0 ;;
+      exit) return 10 ;;
+    esac
+  done
 }
 
 task_choices() {
@@ -867,7 +996,11 @@ main_menu() {
 
     case "$action" in
       add)
-        add_task || true
+        if add_task; then
+          :
+        elif [[ $? -eq 10 ]]; then
+          break
+        fi
         ;;
 
       list)

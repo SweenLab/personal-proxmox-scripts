@@ -131,6 +131,26 @@ Choose one of the built-in tasks:
 Service restarts ask for the systemd service name. Proxmox backups can back up
 one numeric VM/CT ID or all guests using snapshot mode.
 
+Package updates can target the Proxmox host, discovered LXCs, or discovered
+VMs. Multiple selected guests can share one schedule or receive individual
+schedules. VM package updates require QEMU Guest Agent to be installed, enabled,
+and running inside each selected VM.
+
+Reboots list the host and discovered guests. The host must be selected by
+itself. Guest reboots may be scheduled together or individually.
+
+Service restarts provide common Proxmox and SSH services plus a custom systemd
+service option. Multiple services may run together or on separate schedules.
+
+Backups list all discovered LXCs and VMs and include an All LXCs and VMs option.
+Selected guests may share a backup schedule or use individual schedules.
+
+The Custom Command field opens blank and then follows the same timezone and
+schedule flow as the built-in tasks.
+
+After tasks are created, the final window offers Back to Add options, Return to
+main menu, or Exit scheduler.
+
 ## Command
 
 Enter the command that should be executed.
