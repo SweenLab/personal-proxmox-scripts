@@ -60,34 +60,64 @@ prepare_directories() {
   install -d -m 700 "$CONFIG_DIR" "$JOB_DIR"
 }
 
+dialog_size() {
+  local preferred_height=$1
+  local preferred_width=$2
+  local terminal_height
+  local terminal_width
+
+  terminal_height=$(tput lines 2>/dev/null || printf '%s' "${LINES:-24}")
+  terminal_width=$(tput cols 2>/dev/null || printf '%s' "${COLUMNS:-80}")
+
+  [[ $terminal_height =~ ^[0-9]+$ ]] || terminal_height=24
+  [[ $terminal_width =~ ^[0-9]+$ ]] || terminal_width=80
+
+  (( preferred_height > terminal_height - 2 )) && preferred_height=$((terminal_height - 2))
+  (( preferred_width > terminal_width - 2 )) && preferred_width=$((terminal_width - 2))
+
+  (( preferred_height < 1 )) && preferred_height=1
+  (( preferred_width < 1 )) && preferred_width=1
+
+  printf '%s %s\n' "$preferred_height" "$preferred_width"
+}
+
 input_box() {
   local prompt=$1
   local default_value=${2:-}
+  local height width
+
+  read -r height width < <(dialog_size 11 78)
 
   whiptail \
     --title "$APP_NAME" \
-    --inputbox "$prompt" 11 78 "$default_value" \
+    --inputbox "$prompt" "$height" "$width" "$default_value" \
     3>&1 1>&2 2>&3
 }
 
 message_box() {
+  local height width
+
+  read -r height width < <(dialog_size 14 78)
+
   whiptail \
     --title "$APP_NAME" \
-    --msgbox "$1" 14 78
+    --msgbox "$1" "$height" "$width"
 }
 
 show_text() {
   local title=$1
   local content=$2
   local temporary_file
+  local height width
 
   temporary_file=$(mktemp)
   printf '%s\n' "$content" >"$temporary_file"
+  read -r height width < <(dialog_size 22 90)
 
   whiptail \
     --title "$title" \
     --scrolltext \
-    --textbox "$temporary_file" 22 90
+    --textbox "$temporary_file" "$height" "$width"
 
   rm -f "$temporary_file"
 }
@@ -208,11 +238,17 @@ Example: 03:30 or 17:45"
 choose_schedule() {
   local timezone=$1
   local schedule_type
+  local height width menu_height
+
+  read -r height width < <(dialog_size 18 78)
+  menu_height=$((height - 8))
+  (( menu_height < 1 )) && menu_height=1
+  (( menu_height > 8 )) && menu_height=8
 
   schedule_type=$(
     whiptail \
       --title "$APP_NAME" \
-      --menu "How often should this task run?" 18 78 8 \
+      --menu "How often should this task run?" "$height" "$width" "$menu_height" \
       "once" "One time" \
       "daily" "Every day" \
       "weekly" "Once each week" \
@@ -245,10 +281,15 @@ choose_schedule() {
       ;;
 
     weekly)
+      read -r height width < <(dialog_size 18 60)
+      menu_height=$((height - 8))
+      (( menu_height < 1 )) && menu_height=1
+      (( menu_height > 7 )) && menu_height=7
+
       weekday=$(
         whiptail \
           --title "$APP_NAME" \
-          --menu "Choose the day of the week." 18 60 7 \
+          --menu "Choose the day of the week." "$height" "$width" "$menu_height" \
           "Mon" "Monday" \
           "Tue" "Tuesday" \
           "Wed" "Wednesday" \
@@ -448,11 +489,14 @@ Passwords and other secrets should not be placed here."
       "$command_text"
   )
 
+  local height width
+  read -r height width < <(dialog_size 20 86)
+
   whiptail \
     --title "$APP_NAME" \
     --yesno "Create this task?
 
-$confirmation" 20 86 ||
+$confirmation" "$height" "$width" ||
     return
 
   local command_b64
@@ -573,9 +617,15 @@ select_task() {
     return 1
   fi
 
+  local height width menu_height
+  read -r height width < <(dialog_size 20 86)
+  menu_height=$((height - 8))
+  (( menu_height < 1 )) && menu_height=1
+  (( menu_height > 10 )) && menu_height=10
+
   whiptail \
     --title "$APP_NAME" \
-    --menu "Choose a task." 20 86 10 \
+    --menu "Choose a task." "$height" "$width" "$menu_height" \
     "${choices[@]}" \
     3>&1 1>&2 2>&3
 }
@@ -635,14 +685,16 @@ view_logs() {
 
 remove_task() {
   local slug
+  local height width
 
   slug=$(select_task) || return
+  read -r height width < <(dialog_size 13 76)
 
   whiptail \
     --title "$APP_NAME" \
     --yesno "Delete the task '$slug'?
 
-Its service, timer, runner, and metadata will be removed." 13 76 ||
+Its service, timer, runner, and metadata will be removed." "$height" "$width" ||
     return
 
   systemctl \
@@ -666,11 +718,17 @@ Its service, timer, runner, and metadata will be removed." 13 76 ||
 main_menu() {
   while true; do
     local action
+    local height width menu_height
+
+    read -r height width < <(dialog_size 20 78)
+    menu_height=$((height - 8))
+    (( menu_height < 1 )) && menu_height=1
+    (( menu_height > 10 )) && menu_height=10
 
     action=$(
       whiptail \
         --title "$APP_NAME" \
-        --menu "Create and manage scheduled commands." 20 78 10 \
+        --menu "Create and manage scheduled commands." "$height" "$width" "$menu_height" \
         "add" "Add a scheduled task" \
         "list" "List scheduled tasks" \
         "run" "Run a task now" \
