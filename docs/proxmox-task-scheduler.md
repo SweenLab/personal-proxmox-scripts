@@ -180,22 +180,20 @@ The selected timezone is stored with the task and used whenever it runs.
 
 ## Schedule
 
-Each task opens its own scheduling window. Every schedule asks what time the
-task should run.
+Each task opens the same sequence of multi-select scheduling windows followed
+by a window asking what time the task should run.
 
 Every task-creation screen includes a **Back** button. It moves to the previous
 step and keeps previously entered values available for correction. Back on the
 first screen returns to the main menu without creating or changing a task.
 
-- Daily
-- Weekly
-- Monthly
-- Select weekdays, dates, and months
+- Select one or more weekdays
+- Select one or more dates from 1 through 31
+- Select one or more months
+- Select the execution time
 
-Weekly schedules let you select a weekday. Monthly schedules let you select a
-date from 1 through 31. The multi-select schedule lets you select one or more
-weekdays, dates, and months. Leave a group empty to allow every value in that
-group.
+Use the Space key to select multiple items and Enter to continue. Leave a group
+empty to allow every weekday, date, or month.
 
 Examples include every Monday and Wednesday, the 1st and 15th of each month,
 or only January, July, and October.

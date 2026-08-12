@@ -298,139 +298,57 @@ join_by_comma() {
 choose_schedule() {
   local timezone=$1
   local task_name=${2:-Task}
-  local schedule_type
-  local height width menu_height
-
   local run_time
-  local weekday
-  local month_day
   local calendar
+  local -a selected_weekdays=()
+  local -a selected_days=()
+  local -a selected_months=()
+  local weekdays="*"
+  local days="*"
+  local months="*"
+  local selection
 
-  while true; do
-    read -r height width < <(dialog_size 18 78)
-    menu_height=$((height - 8))
-    (( menu_height < 1 )) && menu_height=1
-    (( menu_height > 8 )) && menu_height=8
+  selection=$(choose_multiple \
+    "$APP_NAME - $task_name Schedule" \
+    "Select weekdays with Space, then press Enter. Leave all unchecked for every weekday." \
+    Mon Monday OFF Tue Tuesday OFF Wed Wednesday OFF Thu Thursday OFF \
+    Fri Friday OFF Sat Saturday OFF Sun Sunday OFF) || return 1
+  [[ -n $selection ]] && mapfile -t selected_weekdays <<<"$selection"
 
-    schedule_type=$(
-      whiptail \
-        --title "$APP_NAME - $task_name Schedule" \
-        --cancel-button "Back" \
-        --menu "How often should $task_name run?" "$height" "$width" "$menu_height" \
-        "daily" "Every day" \
-        "weekly" "Selected day each week" \
-        "monthly" "Selected date each month" \
-        "selected" "Choose weekdays, dates, and months" \
-        3>&1 1>&2 2>&3
-    ) || return 1
+  selection=$(choose_multiple \
+    "$APP_NAME - $task_name Schedule" \
+    "Select dates with Space, then press Enter. Leave all unchecked for every date." \
+    1 1st OFF 2 2nd OFF 3 3rd OFF 4 4th OFF 5 5th OFF 6 6th OFF 7 7th OFF \
+    8 8th OFF 9 9th OFF 10 10th OFF 11 11th OFF 12 12th OFF 13 13th OFF \
+    14 14th OFF 15 15th OFF 16 16th OFF 17 17th OFF 18 18th OFF 19 19th OFF \
+    20 20th OFF 21 21st OFF 22 22nd OFF 23 23rd OFF 24 24th OFF 25 25th OFF \
+    26 26th OFF 27 27th OFF 28 28th OFF 29 29th OFF 30 30th OFF 31 31st OFF) || return 1
+  [[ -n $selection ]] && mapfile -t selected_days <<<"$selection"
 
-    case "$schedule_type" in
-    daily)
-      run_time=$(choose_time "$timezone" "$task_name") || continue
-      calendar="*-*-* $run_time:00 $timezone"
-      ;;
+  selection=$(choose_multiple \
+    "$APP_NAME - $task_name Schedule" \
+    "Select months with Space, then press Enter. Leave all unchecked for every month." \
+    01 January OFF 02 February OFF 03 March OFF 04 April OFF \
+    05 May OFF 06 June OFF 07 July OFF 08 August OFF \
+    09 September OFF 10 October OFF 11 November OFF 12 December OFF) || return 1
+  [[ -n $selection ]] && mapfile -t selected_months <<<"$selection"
 
-    weekly)
-      read -r height width < <(dialog_size 18 60)
-      menu_height=$((height - 8))
-      (( menu_height < 1 )) && menu_height=1
-      (( menu_height > 7 )) && menu_height=7
+  ((${#selected_weekdays[@]})) && weekdays=$(join_by_comma "${selected_weekdays[@]}")
+  ((${#selected_days[@]})) && days=$(join_by_comma "${selected_days[@]}")
+  ((${#selected_months[@]})) && months=$(join_by_comma "${selected_months[@]}")
 
-      weekday=$(
-        whiptail \
-          --title "$APP_NAME" \
-          --cancel-button "Back" \
-          --menu "Choose the day of the week." "$height" "$width" "$menu_height" \
-          "Mon" "Monday" \
-          "Tue" "Tuesday" \
-          "Wed" "Wednesday" \
-          "Thu" "Thursday" \
-          "Fri" "Friday" \
-          "Sat" "Saturday" \
-          "Sun" "Sunday" \
-          3>&1 1>&2 2>&3
-      ) || continue
+  run_time=$(choose_time "$timezone" "$task_name") || return 1
+  calendar="$weekdays *-$months-$days $run_time:00 $timezone"
 
-      run_time=$(choose_time "$timezone" "$task_name") || continue
-      calendar="$weekday *-*-* $run_time:00 $timezone"
-      ;;
-
-    monthly)
-      month_day=$(
-        input_box \
-          "Enter the day of the month (1-31)." \
-          "1"
-      ) || continue
-
-      [[ $month_day =~ ^([1-9]|[12][0-9]|3[01])$ ]] ||
-        {
-          message_box "Please use a day from 1 through 31."
-          continue
-        }
-
-      run_time=$(choose_time "$timezone" "$task_name") || continue
-      calendar="*-*-$month_day $run_time:00 $timezone"
-      ;;
-
-    selected)
-      local -a selected_weekdays=()
-      local -a selected_days=()
-      local -a selected_months=()
-      local weekdays="*"
-      local days="*"
-      local months="*"
-      local selection
-
-      selection=$(choose_multiple \
-        "$APP_NAME - $task_name Schedule" \
-        "Select one or more weekdays. Leave all unchecked to allow every weekday." \
-        Mon Monday OFF Tue Tuesday OFF Wed Wednesday OFF Thu Thursday OFF \
-        Fri Friday OFF Sat Saturday OFF Sun Sunday OFF) || continue
-      [[ -n $selection ]] && mapfile -t selected_weekdays <<<"$selection"
-
-      selection=$(choose_multiple \
-        "$APP_NAME - $task_name Schedule" \
-        "Select one or more dates. Leave all unchecked to allow every date." \
-        1 1st OFF 2 2nd OFF 3 3rd OFF 4 4th OFF 5 5th OFF 6 6th OFF 7 7th OFF \
-        8 8th OFF 9 9th OFF 10 10th OFF 11 11th OFF 12 12th OFF 13 13th OFF \
-        14 14th OFF 15 15th OFF 16 16th OFF 17 17th OFF 18 18th OFF 19 19th OFF \
-        20 20th OFF 21 21st OFF 22 22nd OFF 23 23rd OFF 24 24th OFF 25 25th OFF \
-        26 26th OFF 27 27th OFF 28 28th OFF 29 29th OFF 30 30th OFF 31 31st OFF) || continue
-      [[ -n $selection ]] && mapfile -t selected_days <<<"$selection"
-
-      selection=$(choose_multiple \
-        "$APP_NAME - $task_name Schedule" \
-        "Select one or more months. Leave all unchecked to allow every month." \
-        01 January OFF 02 February OFF 03 March OFF 04 April OFF \
-        05 May OFF 06 June OFF 07 July OFF 08 August OFF \
-        09 September OFF 10 October OFF 11 November OFF 12 December OFF) || continue
-      [[ -n $selection ]] && mapfile -t selected_months <<<"$selection"
-
-      ((${#selected_weekdays[@]})) && weekdays=$(join_by_comma "${selected_weekdays[@]}")
-      ((${#selected_days[@]})) && days=$(join_by_comma "${selected_days[@]}")
-      ((${#selected_months[@]})) && months=$(join_by_comma "${selected_months[@]}")
-
-      run_time=$(choose_time "$timezone" "$task_name") || continue
-      calendar="$weekdays *-$months-$days $run_time:00 $timezone"
-      ;;
-
-    *)
-      continue
-      ;;
-    esac
-
-    if ! systemd-analyze calendar "$calendar" >/dev/null 2>&1; then
-      message_box \
-        "The schedule could not be understood:
+  if ! systemd-analyze calendar "$calendar" >/dev/null 2>&1; then
+    message_box \
+      "The schedule could not be understood:
 
 $calendar"
+    return 1
+  fi
 
-      continue
-    fi
-
-    printf '%s' "$calendar"
-    return 0
-  done
+  printf '%s' "$calendar"
 }
 
 validate_target() {
