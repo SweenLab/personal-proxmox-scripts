@@ -90,6 +90,7 @@ input_box() {
 
   whiptail \
     --title "$APP_NAME" \
+    --cancel-button "Back" \
     --inputbox "$prompt" "$height" "$width" "$default_value" \
     3>&1 1>&2 2>&3
 }
@@ -248,6 +249,7 @@ choose_task_type() {
 
   whiptail \
     --title "$APP_NAME - New Task" \
+    --cancel-button "Back" \
     --menu "What task should be scheduled?" "$height" "$width" "$menu_height" \
     "update" "Update packages" \
     "reboot" "Reboot" \
@@ -270,6 +272,7 @@ choose_multiple() {
 
   whiptail \
     --title "$title" \
+    --cancel-button "Back" \
     --separate-output \
     --checklist "$prompt" "$height" "$width" "$list_height" \
     "$@" \
@@ -295,6 +298,7 @@ choose_schedule() {
   schedule_type=$(
     whiptail \
       --title "$APP_NAME - $task_name Schedule" \
+      --cancel-button "Back" \
       --menu "How often should $task_name run?" "$height" "$width" "$menu_height" \
       "daily" "Every day" \
       "weekly" "Selected day each week" \
@@ -323,6 +327,7 @@ choose_schedule() {
       weekday=$(
         whiptail \
           --title "$APP_NAME" \
+          --cancel-button "Back" \
           --menu "Choose the day of the week." "$height" "$width" "$menu_height" \
           "Mon" "Monday" \
           "Tue" "Tuesday" \

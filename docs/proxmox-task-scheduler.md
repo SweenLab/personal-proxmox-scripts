@@ -160,6 +160,9 @@ The selected timezone is stored with the task and used whenever it runs.
 Each task opens its own scheduling window. Every schedule asks what time the
 task should run.
 
+Task-creation screens include a **Back** button. Going back exits the unfinished
+wizard and returns to the main menu without creating or changing a task.
+
 - Daily
 - Weekly
 - Monthly
