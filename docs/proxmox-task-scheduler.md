@@ -61,8 +61,11 @@ Optional:
 Run as **root** on the Proxmox host.
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/SweenLab/personal-proxmox-scripts/main/scripts/proxmox-task-scheduler.sh)
+bash <(curl -fsSL "https://raw.githubusercontent.com/SweenLab/personal-proxmox-scripts/main/scripts/proxmox-task-scheduler.sh?$(date +%s)")
 ```
+
+The timestamp prevents GitHub's raw-file cache from serving an older version of
+the scheduler after an update.
 
 If `whiptail` is not installed, the scheduler offers to install it automatically.
 
