@@ -241,22 +241,30 @@ Example: 03:30 or 17:45"
 
 choose_task_type() {
   local height width menu_height
+  local selection
 
   read -r height width < <(dialog_size 18 78)
   menu_height=$((height - 8))
   (( menu_height < 1 )) && menu_height=1
   (( menu_height > 8 )) && menu_height=8
 
-  whiptail \
-    --title "$APP_NAME - New Task" \
-    --cancel-button "Back" \
-    --menu "What task should be scheduled?" "$height" "$width" "$menu_height" \
-    "update" "Update packages" \
-    "reboot" "Reboot" \
-    "restart-service" "Restart a service" \
-    "backup" "Run a Proxmox backup" \
-    "custom" "Custom command" \
-    3>&1 1>&2 2>&3
+  selection=$(
+    whiptail \
+      --title "$APP_NAME - New Task" \
+      --cancel-button "Back" \
+      --menu "What task should be scheduled?" "$height" "$width" "$menu_height" \
+      "update" "Update packages" \
+      "reboot" "Reboot" \
+      "restart-service" "Restart a service" \
+      "backup" "Run a Proxmox backup" \
+      "custom" "Custom command" \
+      3>&1 1>&2 2>&3
+  ) || {
+    printf '%s' "back"
+    return 0
+  }
+
+  printf '%s' "$selection"
 }
 
 choose_multiple() {
@@ -476,7 +484,8 @@ add_task() {
   while (( step <= 7 )); do
     case "$step" in
       1)
-        task_type=$(choose_task_type) || return 0
+        task_type=$(choose_task_type)
+        [[ $task_type == "back" ]] && return 0
         description=""
         calendar=""
         step=2
@@ -922,4 +931,6 @@ main() {
   main_menu
 }
 
-main "$@"
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+  main "$@"
+fi
