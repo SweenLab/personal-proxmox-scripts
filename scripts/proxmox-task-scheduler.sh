@@ -476,7 +476,7 @@ add_task() {
   while (( step <= 7 )); do
     case "$step" in
       1)
-        task_type=$(choose_task_type) || return
+        task_type=$(choose_task_type) || return 0
         description=""
         calendar=""
         step=2
@@ -858,23 +858,23 @@ main_menu() {
 
     case "$action" in
       add)
-        add_task
+        add_task || true
         ;;
 
       list)
-        list_tasks
+        list_tasks || true
         ;;
 
       run)
-        run_task_now
+        run_task_now || true
         ;;
 
       logs)
-        view_logs
+        view_logs || true
         ;;
 
       remove)
-        remove_task
+        remove_task || true
         ;;
 
       exit)
