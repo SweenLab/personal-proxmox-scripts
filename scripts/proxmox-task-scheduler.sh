@@ -320,7 +320,7 @@ choose_schedule() {
         "daily" "Every day" \
         "weekly" "Selected day each week" \
         "monthly" "Selected date each month" \
-        "custom" "Select multiple days, dates, or months" \
+        "selected" "Choose weekdays, dates, and months" \
         3>&1 1>&2 2>&3
     ) || return 1
 
@@ -372,7 +372,7 @@ choose_schedule() {
       calendar="*-*-$month_day $run_time:00 $timezone"
       ;;
 
-    custom)
+    selected)
       local -a selected_weekdays=()
       local -a selected_days=()
       local -a selected_months=()
@@ -383,14 +383,14 @@ choose_schedule() {
 
       selection=$(choose_multiple \
         "$APP_NAME - $task_name Schedule" \
-        "Select weekdays, or leave all unchecked for any weekday." \
+        "Select one or more weekdays. Leave all unchecked to allow every weekday." \
         Mon Monday OFF Tue Tuesday OFF Wed Wednesday OFF Thu Thursday OFF \
         Fri Friday OFF Sat Saturday OFF Sun Sunday OFF) || continue
       [[ -n $selection ]] && mapfile -t selected_weekdays <<<"$selection"
 
       selection=$(choose_multiple \
         "$APP_NAME - $task_name Schedule" \
-        "Select dates of the month, or leave all unchecked for any date." \
+        "Select one or more dates. Leave all unchecked to allow every date." \
         1 1st OFF 2 2nd OFF 3 3rd OFF 4 4th OFF 5 5th OFF 6 6th OFF 7 7th OFF \
         8 8th OFF 9 9th OFF 10 10th OFF 11 11th OFF 12 12th OFF 13 13th OFF \
         14 14th OFF 15 15th OFF 16 16th OFF 17 17th OFF 18 18th OFF 19 19th OFF \
@@ -400,7 +400,7 @@ choose_schedule() {
 
       selection=$(choose_multiple \
         "$APP_NAME - $task_name Schedule" \
-        "Select months, or leave all unchecked for every month." \
+        "Select one or more months. Leave all unchecked to allow every month." \
         01 January OFF 02 February OFF 03 March OFF 04 April OFF \
         05 May OFF 06 June OFF 07 July OFF 08 August OFF \
         09 September OFF 10 October OFF 11 November OFF 12 December OFF) || continue

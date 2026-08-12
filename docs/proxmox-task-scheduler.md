@@ -190,12 +190,12 @@ first screen returns to the main menu without creating or changing a task.
 - Daily
 - Weekly
 - Monthly
-- Advanced multi-select
+- Select weekdays, dates, and months
 
 Weekly schedules let you select a weekday. Monthly schedules let you select a
-date from 1 through 31. Advanced schedules let you select multiple weekdays,
-multiple dates, and multiple months. Leave a group empty to mean every value in
-that group.
+date from 1 through 31. The multi-select schedule lets you select one or more
+weekdays, dates, and months. Leave a group empty to allow every value in that
+group.
 
 Examples include every Monday and Wednesday, the 1st and 15th of each month,
 or only January, July, and October.
