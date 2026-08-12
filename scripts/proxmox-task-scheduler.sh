@@ -214,12 +214,15 @@ validate_time() {
 
 choose_time() {
   local timezone=$1
+  local task_name=${2:-Task}
   local value
 
   while true; do
     value=$(
       input_box \
-        "Enter the time in $timezone using 24-hour HH:MM format." \
+        "$task_name schedule
+
+Enter the time in $timezone using 24-hour HH:MM format." \
         "03:00"
     ) || return 1
 
@@ -235,8 +238,52 @@ Example: 03:30 or 17:45"
   done
 }
 
+choose_task_type() {
+  local height width menu_height
+
+  read -r height width < <(dialog_size 18 78)
+  menu_height=$((height - 8))
+  (( menu_height < 1 )) && menu_height=1
+  (( menu_height > 8 )) && menu_height=8
+
+  whiptail \
+    --title "$APP_NAME - New Task" \
+    --menu "What task should be scheduled?" "$height" "$width" "$menu_height" \
+    "update" "Update packages" \
+    "reboot" "Reboot" \
+    "restart-service" "Restart a service" \
+    "backup" "Run a Proxmox backup" \
+    "custom" "Custom command" \
+    3>&1 1>&2 2>&3
+}
+
+choose_multiple() {
+  local title=$1
+  local prompt=$2
+  shift 2
+  local height width list_height
+
+  read -r height width < <(dialog_size 22 78)
+  list_height=$((height - 8))
+  (( list_height < 1 )) && list_height=1
+  (( list_height > 14 )) && list_height=14
+
+  whiptail \
+    --title "$title" \
+    --separate-output \
+    --checklist "$prompt" "$height" "$width" "$list_height" \
+    "$@" \
+    3>&1 1>&2 2>&3
+}
+
+join_by_comma() {
+  local IFS=,
+  printf '%s' "$*"
+}
+
 choose_schedule() {
   local timezone=$1
+  local task_name=${2:-Task}
   local schedule_type
   local height width menu_height
 
@@ -247,36 +294,23 @@ choose_schedule() {
 
   schedule_type=$(
     whiptail \
-      --title "$APP_NAME" \
-      --menu "How often should this task run?" "$height" "$width" "$menu_height" \
-      "once" "One time" \
+      --title "$APP_NAME - $task_name Schedule" \
+      --menu "How often should $task_name run?" "$height" "$width" "$menu_height" \
       "daily" "Every day" \
-      "weekly" "Once each week" \
-      "monthly" "Once each month" \
-      "custom" "Custom systemd calendar expression" \
+      "weekly" "Selected day each week" \
+      "monthly" "Selected date each month" \
+      "custom" "Select multiple days, dates, or months" \
       3>&1 1>&2 2>&3
   ) || return 1
 
   local run_time
-  local date_value
   local weekday
   local month_day
   local calendar
 
   case "$schedule_type" in
-    once)
-      date_value=$(
-        input_box \
-          "Enter the date in YYYY-MM-DD format." \
-          "$(date +%F)"
-      ) || return 1
-
-      run_time=$(choose_time "$timezone") || return 1
-      calendar="$date_value $run_time:00 $timezone"
-      ;;
-
     daily)
-      run_time=$(choose_time "$timezone") || return 1
+      run_time=$(choose_time "$timezone" "$task_name") || return 1
       calendar="*-*-* $run_time:00 $timezone"
       ;;
 
@@ -300,38 +334,67 @@ choose_schedule() {
           3>&1 1>&2 2>&3
       ) || return 1
 
-      run_time=$(choose_time "$timezone") || return 1
+      run_time=$(choose_time "$timezone" "$task_name") || return 1
       calendar="$weekday *-*-* $run_time:00 $timezone"
       ;;
 
     monthly)
       month_day=$(
         input_box \
-          "Enter the day of the month (1-28)." \
+          "Enter the day of the month (1-31)." \
           "1"
       ) || return 1
 
-      [[ $month_day =~ ^([1-9]|1[0-9]|2[0-8])$ ]] ||
+      [[ $month_day =~ ^([1-9]|[12][0-9]|3[01])$ ]] ||
         {
-          message_box "Please use a day from 1 through 28."
+          message_box "Please use a day from 1 through 31."
           return 1
         }
 
-      run_time=$(choose_time "$timezone") || return 1
+      run_time=$(choose_time "$timezone" "$task_name") || return 1
       calendar="*-*-$month_day $run_time:00 $timezone"
       ;;
 
     custom)
-      calendar=$(
-        input_box \
-          "Enter a systemd OnCalendar expression.
+      local -a selected_weekdays=()
+      local -a selected_days=()
+      local -a selected_months=()
+      local weekdays="*"
+      local days="*"
+      local months="*"
+      local selection
 
-The selected timezone is:
-$timezone
+      selection=$(choose_multiple \
+        "$APP_NAME - $task_name Schedule" \
+        "Select weekdays, or leave all unchecked for any weekday." \
+        Mon Monday OFF Tue Tuesday OFF Wed Wednesday OFF Thu Thursday OFF \
+        Fri Friday OFF Sat Saturday OFF Sun Sunday OFF) || return 1
+      [[ -n $selection ]] && mapfile -t selected_weekdays <<<"$selection"
 
-The timezone must be included if you replace the example." \
-          "*-*-* 03:00:00 $timezone"
-      ) || return 1
+      selection=$(choose_multiple \
+        "$APP_NAME - $task_name Schedule" \
+        "Select dates of the month, or leave all unchecked for any date." \
+        1 1st OFF 2 2nd OFF 3 3rd OFF 4 4th OFF 5 5th OFF 6 6th OFF 7 7th OFF \
+        8 8th OFF 9 9th OFF 10 10th OFF 11 11th OFF 12 12th OFF 13 13th OFF \
+        14 14th OFF 15 15th OFF 16 16th OFF 17 17th OFF 18 18th OFF 19 19th OFF \
+        20 20th OFF 21 21st OFF 22 22nd OFF 23 23rd OFF 24 24th OFF 25 25th OFF \
+        26 26th OFF 27 27th OFF 28 28th OFF 29 29th OFF 30 30th OFF 31 31st OFF) || return 1
+      [[ -n $selection ]] && mapfile -t selected_days <<<"$selection"
+
+      selection=$(choose_multiple \
+        "$APP_NAME - $task_name Schedule" \
+        "Select months, or leave all unchecked for every month." \
+        01 January OFF 02 February OFF 03 March OFF 04 April OFF \
+        05 May OFF 06 June OFF 07 July OFF 08 August OFF \
+        09 September OFF 10 October OFF 11 November OFF 12 December OFF) || return 1
+      [[ -n $selection ]] && mapfile -t selected_months <<<"$selection"
+
+      ((${#selected_weekdays[@]})) && weekdays=$(join_by_comma "${selected_weekdays[@]}")
+      ((${#selected_days[@]})) && days=$(join_by_comma "${selected_days[@]}")
+      ((${#selected_months[@]})) && months=$(join_by_comma "${selected_months[@]}")
+
+      run_time=$(choose_time "$timezone" "$task_name") || return 1
+      calendar="$weekdays *-$months-$days $run_time:00 $timezone"
       ;;
 
     *)
@@ -388,6 +451,8 @@ write_metadata() {
 }
 
 add_task() {
+  local task_type
+  local task_name
   local description
   local target
   local command_text
@@ -395,8 +460,71 @@ add_task() {
   local calendar
   local slug
 
+  task_type=$(choose_task_type) || return
+
+  case "$task_type" in
+    update)
+      task_name="Package Update"
+      command_text="apt-get update && apt-get -y full-upgrade"
+      ;;
+
+    reboot)
+      task_name="Reboot"
+      command_text="systemctl reboot"
+      ;;
+
+    restart-service)
+      task_name="Service Restart"
+      local service_name
+      service_name=$(input_box \
+        "Enter the systemd service name to restart.
+
+Examples: pveproxy, docker, ssh" "") || return
+
+      [[ $service_name =~ ^[A-Za-z0-9@_.:-]+$ ]] || {
+        message_box "Use a valid systemd service name."
+        return
+      }
+      command_text="systemctl restart -- $service_name"
+      ;;
+
+    backup)
+      task_name="Proxmox Backup"
+      local backup_target
+      backup_target=$(input_box \
+        "Enter one VM/CT ID to back up, or enter all.
+
+The backup uses snapshot mode and your configured default storage." "all") || return
+
+      if [[ $backup_target == "all" ]]; then
+        command_text="vzdump --all 1 --mode snapshot"
+      elif [[ $backup_target =~ ^[0-9]+$ ]]; then
+        command_text="vzdump $backup_target --mode snapshot"
+      else
+        message_box "Enter one numeric VM/CT ID or all."
+        return
+      fi
+      ;;
+
+    custom)
+      task_name="Custom Command"
+      command_text=$(input_box \
+        "Enter the command exactly as it should run.
+
+Passwords and other secrets should not be placed here." "") || return
+      [[ -n $command_text ]] || {
+        message_box "A command is required."
+        return
+      }
+      ;;
+
+    *)
+      return
+      ;;
+  esac
+
   description=$(
-    input_box "Enter a short description for this task."
+    input_box "Enter a short description for this task." "$task_name"
   ) || return
 
   [[ -n $description ]] ||
@@ -430,7 +558,7 @@ Use a different description."
       "Where should the command run?
 
 Use local for the Proxmox host, or enter an SSH destination such as root@10.10.10.201." \
-      "root@"
+      "local"
   ) || return
 
   if ! validate_target "$target"; then
@@ -461,21 +589,8 @@ Then run this scheduler again."
     return
   fi
 
-  command_text=$(
-    input_box \
-      "Enter the command exactly as it should run on $target.
-
-Passwords and other secrets should not be placed here."
-  ) || return
-
-  [[ -n $command_text ]] ||
-    {
-      message_box "A command is required."
-      return
-    }
-
   timezone=$(choose_timezone) || return
-  calendar=$(choose_schedule "$timezone") || return
+  calendar=$(choose_schedule "$timezone" "$task_name") || return
 
   local confirmation
 

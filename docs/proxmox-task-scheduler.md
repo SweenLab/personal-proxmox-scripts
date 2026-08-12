@@ -13,6 +13,8 @@ No manual timer files or cron jobs are required.
 The Task Scheduler allows you to:
 
 - Create scheduled tasks
+- Choose common tasks for package updates, reboots, service restarts, and Proxmox backups
+- Create a custom command when a preset does not fit
 - List existing scheduled tasks
 - Run tasks immediately
 - View task logs
@@ -113,6 +115,19 @@ Remote targets require passwordless SSH.
 
 ---
 
+## Task Type
+
+Choose one of the built-in tasks:
+
+- Update packages
+- Reboot
+- Restart a service
+- Run a Proxmox backup
+- Custom command
+
+Service restarts ask for the systemd service name. Proxmox backups can back up
+one numeric VM/CT ID or all guests using snapshot mode.
+
 ## Command
 
 Enter the command that should be executed.
@@ -142,13 +157,21 @@ The selected timezone is stored with the task and used whenever it runs.
 
 ## Schedule
 
-Choose one of the supported schedules.
+Each task opens its own scheduling window. Every schedule asks what time the
+task should run.
 
-- Once
 - Daily
 - Weekly
 - Monthly
-- Custom
+- Advanced multi-select
+
+Weekly schedules let you select a weekday. Monthly schedules let you select a
+date from 1 through 31. Advanced schedules let you select multiple weekdays,
+multiple dates, and multiple months. Leave a group empty to mean every value in
+that group.
+
+Examples include every Monday and Wednesday, the 1st and 15th of each month,
+or only January, July, and October.
 
 ---
 
