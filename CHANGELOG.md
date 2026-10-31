@@ -2,6 +2,13 @@
 
 Each user-visible update is recorded here and on the [GitHub Releases page](https://github.com/SweenLab/sweenlab-scripts/releases). Debian wizard tags use `debian-lxc-vX.Y.Z`; older `v1.x` releases belong to the retired maintenance wizard.
 
+## Debian LXC Wizard 0.1.24 — 2026-10-31
+
+- Improve the memory chart contrast: neutral grey size labels, bold green MiB values to enter, and dim vertical column separators. Keep the four equal aligned columns and all 1–16 GiB conversions.
+- Preserve bold-value and separator cues in terminals without color. Update README, guides, version labels and immutable launcher.
+
+Validation: Bash syntax, diff checks and all 65 tests pass, including actual embedded-UI rendering at 80 × 24: color attributes, all conversions and consistent column positions. No live Proxmox display test was performed for this release.
+
 ## Debian LXC Wizard 0.1.23 — 2026-10-31
 
 - Arrange the 1–16 GiB memory chart in four equal columns of four entries, eliminating the shorter rows that were centered separately in v0.1.22. All rows fit a standard 80-column terminal.
