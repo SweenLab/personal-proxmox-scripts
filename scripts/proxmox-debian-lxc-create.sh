@@ -2,7 +2,7 @@
 # SweenLab Debian LXC Creation Wizard — MIT
 # https://github.com/SweenLab/sweenlab-scripts
 set -Eeuo pipefail
-SCRIPT_VERSION=0.1.23
+SCRIPT_VERSION=0.1.24
 COMPLETED=()
 CTID='' CREATED=0 LOG='' TMP='' UI_DIR='' UI_ACTION='' UI_VALUE=''
 die() { printf '[ERROR] %s\n' "$*" >&2; exit 1; }
@@ -617,7 +617,20 @@ def run(screen, kind, title, prompt, seed, options):
             prompt_y = max(2, 2 + (height - 7 - block_height) // 2)
             required = '(required)' in title
             for idx, line in enumerate(lines[:8]):
-                write(prompt_y + idx, 3, line, success | (curses.A_BOLD if required else 0))
+                conversions = re.findall(r'(\d+)\s+GiB\s*=\s*(\d+)', line)
+                if len(conversions) == 4:
+                    # Keep labels neutral; emphasize only the values to enter.
+                    cell_width, gap = 14, 3
+                    grid_x = (width - (4 * cell_width + 3 * gap)) // 2
+                    for column, (gib, mib) in enumerate(conversions):
+                        x = grid_x + column * (cell_width + gap)
+                        box.addnstr(prompt_y + idx, x, f'{gib:>2} GiB = ', 9, body)
+                        box.addnstr(prompt_y + idx, x + 9, f'{mib:>5}', 5, success | curses.A_BOLD)
+                        if column < 3:
+                            box.addnstr(prompt_y + idx, x + cell_width, ' │ ', gap, body | curses.A_DIM)
+                else:
+                    style = (body | curses.A_BOLD) if line.startswith('Memory in MiB') else success | (curses.A_BOLD if required else 0)
+                    write(prompt_y + idx, 3, line, style)
             content_y = prompt_y + 1 + min(len(lines), 8)
             if kind in ('input', 'password'):
                 shown = '*' * len(text) if kind == 'password' else text

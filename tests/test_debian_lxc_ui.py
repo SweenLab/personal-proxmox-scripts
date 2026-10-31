@@ -1,5 +1,6 @@
 """Check the embedded terminal UI's actual rendering and key handling."""
 import curses
+import ast
 import importlib.util
 import os
 from pathlib import Path
@@ -100,6 +101,28 @@ class TerminalUiTests(unittest.TestCase):
              patch.object(curses, 'color_pair', return_value=0):
             self.ui.run(screen, 'yesno', 'Test', 'Question', '1', [])
         self.assertEqual([call.args for call in pairs.call_args_list], [(1, 208, -1), (2, 114, -1), (3, curses.COLOR_BLACK, 114), (4, 252, -1), (5, 252, 236)])
+
+    def test_memory_chart_has_distinct_labels_values_and_aligned_columns(self):
+        line = next(line for line in SCRIPT.read_text().splitlines() if "memory) title='Memory'" in line)
+        prompt = ast.literal_eval(line.split('prompt=$', 1)[1][:-2])
+        screen = Screen(['\n'])
+        screen.getmaxyx = lambda: (24, 80)
+        with patch.dict(os.environ, {'NO_COLOR': ''}), patch.object(curses, 'curs_set'), patch.object(curses, 'has_colors', return_value=True), \
+             patch.object(curses, 'start_color'), patch.object(curses, 'use_default_colors'), \
+             patch.object(curses, 'COLORS', 256, create=True), patch.object(curses, 'init_pair'), \
+             patch.object(curses, 'color_pair', side_effect=lambda i: i * 16):
+            result = self.ui.run(screen, 'input', 'Memory (required)', prompt, '1024', [])
+        self.assertEqual(result, ('next', '1024'))
+        values = [item for item in screen.positions if item[2].strip().isdigit() and len(item[2]) == 5]
+        self.assertEqual(len(values), 16)
+        self.assertEqual({int(item[2]) for item in values}, {i * 1024 for i in range(1, 17)})
+        self.assertTrue(all(item[3] == (32 | curses.A_BOLD,) for item in values))
+        labels = [item for item in screen.positions if item[2].endswith(' GiB = ')]
+        self.assertEqual(len(labels), 16)
+        self.assertTrue(all(item[3] == (64,) for item in labels))
+        for y in {item[0] for item in values}:
+            self.assertEqual([item[1] for item in values if item[0] == y], [14, 31, 48, 65])
+        self.assertEqual(sum(item[2] == ' │ ' for item in screen.positions), 12)
 
     def test_arrow_only_input_navigation_and_cursor_editing(self):
         keys = [curses.KEY_LEFT, 'X', curses.KEY_DOWN, curses.KEY_LEFT, '\n']
