@@ -2,6 +2,13 @@
 
 Each user-visible update is recorded here and on the [GitHub Releases page](https://github.com/SweenLab/sweenlab-scripts/releases). Debian wizard tags use `debian-lxc-vX.Y.Z`; older `v1.x` releases belong to the retired maintenance wizard.
 
+## Debian LXC Wizard 0.1.23 — 2026-10-31
+
+- Arrange the 1–16 GiB memory chart in four equal columns of four entries, eliminating the shorter rows that were centered separately in v0.1.22. All rows fit a standard 80-column terminal.
+- Update README, guides, version labels and the immutable launcher.
+
+Validation: Bash syntax, diff checks and all 64 existing tests pass. Verified equal row widths and complete 1–16 GiB coverage within the prompt limit. Live Proxmox display has not been tested for this release.
+
 ## Debian LXC Wizard 0.1.22 — 2026-10-31
 
 - Expand the Memory screen conversion chart to every whole GiB from 1 through 16, including 3 GiB = 3072 MiB. Use three compact columns within the dialog's eight-line prompt limit so every entry is visible at standard terminal width.
