@@ -76,10 +76,11 @@ pct() {
     if [[ "$1" == exec && "$*" == *'bash /root/sweenlab-debian-tools.sh'* && "$SCENARIO" == installer-fail ]]; then return 42; fi
     return 0
 }
-visits_memory=0; visits_swap=0; visits_disk=0; visits_review=0; visits_password=0; visits_hostname=0; visits_selected=0; visits_ipmode=0; visits_gpu=0; visits_ip=0
+rewinding=0; visits_memory=0; visits_swap=0; visits_disk=0; visits_review=0; visits_password=0; visits_hostname=0; visits_selected=0; visits_ipmode=0; visits_gpu=0; visits_ip=0
 ui() {
     printf '%s|%s|seed=%s|error=%s\\n' "$key" "$1" "$([[ "$key" == password* ]] && echo HIDDEN || printf '%s' "$4")" "$error" >> "$FIXTURE/trace"
     UI_ACTION=next; UI_VALUE=$4
+    if (( rewinding )) && [[ $key != selected ]]; then UI_ACTION=back; return; fi
     [[ ( $SCENARIO != verbose && $SCENARIO != ts-fail ) || $key != verbose ]] || UI_VALUE=1
     [[ "$SCENARIO" != abort ]] || { UI_ACTION=abort; return; }
     case "$key" in
@@ -111,9 +112,10 @@ ui() {
         password) visits_password=$((visits_password+1)); UI_VALUE=fixture-secret
             if [[ "$SCENARIO" == mandatory && "$visits_password" == 1 ]]; then UI_VALUE=''; fi;;
         password_confirm) [[ -z $4 ]] || exit 95; UI_VALUE=fixture-secret;;
-        selected) visits_selected=$((visits_selected+1)); if [[ "$SCENARIO" == no-packages ]]; then if (( visits_selected == 1 )); then UI_VALUE=''; else UI_VALUE=__none__; fi; else UI_VALUE=$'git\\ncompose\\ntailscale'; fi;;
+        selected) visits_selected=$((visits_selected+1)); if [[ "$SCENARIO" == no-packages ]]; then if (( visits_selected == 1 )); then UI_VALUE=''; else UI_VALUE=__none__; fi; elif [[ $SCENARIO == no-tailscale || ( $SCENARIO == removed-tailscale && $visits_selected -gt 1 ) ]]; then UI_VALUE=$'git\\ncompose'; else UI_VALUE=$'git\\ncompose\\ntailscale'; fi; rewinding=0;;
         review) visits_review=$((visits_review+1));
             printf '%s' "$3" > "$FIXTURE/review"
+            if [[ $SCENARIO == removed-tailscale && $visits_review == 1 ]]; then rewinding=1; UI_ACTION=back; fi
             if [[ "$SCENARIO" == back && "$visits_review" == 1 ]]; then UI_ACTION=back; fi;;
     esac
 }
@@ -179,6 +181,7 @@ configure
         self.assertIn('<--locale> <en_GB.UTF-8>', calls)
         self.assertIn('verbose|yesno|seed=0', files['trace'])
         self.assertIn('fuse|yesno|seed=0', files['trace'])
+        self.assertIn('tun|yesno|seed=1', files['trace'])
         self.assertIn('<tailscale> <up> <--timeout=120s> <--ssh=true> <--accept-dns=false> <--accept-routes=false> <--qr=false>', calls)
         self.assertIn('SECRET-AUTH-URL', files['auth-output'])
         logs = '\n'.join(value for key, value in files.items() if key.startswith('logs/'))
@@ -188,6 +191,22 @@ configure
         self.assertNotIn('Refresh the Proxmox template catalog', files['trace'])
         for removed in ('cpulimit|', 'cpuunits|', 'protection|', 'startup|', 'upgrade|', 'vlan|', 'mtu|', 'mac|', 'rate|', 'dns|', 'search|'):
             self.assertNotIn('\n' + removed, '\n' + files['trace'])
+
+    def test_tun_is_hidden_and_not_passed_without_tailscale(self):
+        for scenario in ('no-tailscale', 'no-packages'):
+            with self.subTest(scenario=scenario):
+                result, files = self.exercise(scenario, execute=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertNotIn('tun|yesno|', files['trace'])
+                self.assertNotIn('path=/dev/net/tun', files['calls'])
+                self.assertIn('FUSE / TUN      No / No', files['review'])
+
+    def test_removing_tailscale_via_back_clears_tun(self):
+        result, files = self.exercise('removed-tailscale', execute=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('tun|yesno|seed=1', files['trace'])
+        self.assertIn('FUSE / TUN      No / No', files['review'])
+        self.assertNotIn('path=/dev/net/tun', files['calls'])
 
     def test_verbose_ends_with_completed_checklist(self):
         result, files = self.exercise('verbose', execute=True)

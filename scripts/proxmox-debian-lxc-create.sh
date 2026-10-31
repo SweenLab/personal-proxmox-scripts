@@ -2,7 +2,7 @@
 # SweenLab Debian LXC Creation Wizard — MIT
 # https://github.com/SweenLab/sweenlab-scripts
 set -Eeuo pipefail
-SCRIPT_VERSION=0.1.24
+SCRIPT_VERSION=0.1.25
 COMPLETED=()
 CTID='' CREATED=0 LOG='' TMP='' UI_DIR='' UI_ACTION='' UI_VALUE=''
 die() { printf '[ERROR] %s\n' "$*" >&2; exit 1; }
@@ -188,7 +188,7 @@ configure() {
     hostname='' tags='' bridge='' ipmode='' ip='' gateway='' ip6mode='' ip6='' gateway6=''
     vlan='' mtu=1500 mac='' rate='' dns='' search='' cores=2 memory=1024 swap='' disk=10 root_store=''
     tz=$(host_timezone); unpriv=1 keyfile='' password='' password_confirm='' template_store='' template=''
-    selected='' ts_up=1 ts_options=$'ssh\nignore-dns' nesting=1 keyctl=1 fuse=0 tun=1 gpu=0 gpu_selected='' onboot=1
+    selected='' ts_up=1 ts_options=$'ssh\nignore-dns' nesting=1 keyctl=1 fuse=0 tun=0 gpu=0 gpu_selected='' onboot=1
     locale_name=$(host_locale) verbose=0
     docker=0 tailscale=0 packages_display='' gpu_display='' ts_flags_display=''
     local -a steps=(ctid hostname tags bridge ipmode ip gateway ip6mode ip6 gateway6 cores memory swap disk root_store tz locale_name unpriv keyfile password password_confirm template_store template selected ts_up ts_options nesting keyctl fuse tun gpu gpu_selected onboot verbose review)
@@ -201,7 +201,7 @@ configure() {
         case "$key" in
             ip|gateway) [[ "$ipmode" == static ]] || { index=$((index + direction)); continue; };;
             ip6|gateway6) [[ "$ip6mode" == static ]] || { index=$((index + direction)); continue; };;
-            ts_up|ts_options) (( tailscale )) || { index=$((index + direction)); continue; };;
+            ts_up|ts_options|tun) (( tailscale )) || { index=$((index + direction)); continue; };;
             keyctl) (( unpriv )) || { index=$((index + direction)); continue; };;
             gpu|gpu_selected) [[ -n "$gpu_names" ]] || { index=$((index + direction)); continue; };;
         esac
@@ -312,7 +312,8 @@ configure() {
                 [[ $selected != __none__ ]] || packages_display=None
                 contains_line docker "$selected" && docker=1
                 contains_line compose "$selected" && docker=1
-                contains_line tailscale "$selected" && tailscale=1;;
+                contains_line tailscale "$selected" && tailscale=1
+                tun=$tailscale;;
             ts_options) ts_flags_display=${ts_options//$'\n'/, };;
             nesting) (( docker == 0 || nesting == 1 )) || error='Docker was selected and requires nesting.';;
             keyctl) (( docker == 0 || keyctl == 1 )) || error='Unprivileged Docker requires keyctl.';;
