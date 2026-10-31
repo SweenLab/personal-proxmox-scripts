@@ -2,7 +2,7 @@
 # SweenLab Debian LXC Creation Wizard — MIT
 # https://github.com/SweenLab/sweenlab-scripts
 set -Eeuo pipefail
-SCRIPT_VERSION=0.1.20
+SCRIPT_VERSION=0.1.21
 COMPLETED=()
 CTID='' CREATED=0 LOG='' TMP='' UI_DIR='' UI_ACTION='' UI_VALUE=''
 die() { printf '[ERROR] %s\n' "$*" >&2; exit 1; }
@@ -125,6 +125,19 @@ container_notes() {
 </table>
 NOTES
 }
+save_container_notes() {
+    local notes
+    notes=$(container_notes)
+    proxmox_pct set "$CTID" --description "$notes" || return $?
+    # Proxmox stores notes as config comments and restores a trailing newline.
+    # Compare content through the API without treating that newline as data loss.
+    pvesh get "/nodes/$(hostname -s)/lxc/$CTID/config" --output-format json |
+        python3 -c 'import json, sys
+actual = json.load(sys.stdin).get("description", "")
+if actual.rstrip("\n") != sys.argv[1].rstrip("\n"):
+    sys.exit("Proxmox did not retain the expected Summary notes; inspect the CT description.")
+' "$notes"
+}
 make_plan() {
     cat <<PLAN
 CONTAINER
@@ -134,6 +147,7 @@ CONTAINER
 
 RESOURCES
   CPU / memory    $cores cores / $memory MiB
+  Swap            $swap MiB (0 disables swap)
   Root disk       $root_store · $disk GiB
   Timezone        $tz
   Template        ${template##*/}
@@ -160,8 +174,8 @@ AUTOMATIC SETTINGS
   Root password required (hidden); locale $locale_name
   Verbose output  $(yes_word "$verbose")
   Full package upgrade enabled; firewall interface flag enabled
-  CPU limit 0; CPU weight 100; swap 512 MiB
-  Summary notes: centered SWEENLAB SCRIPTS banner and links
+  CPU limit 0; CPU weight 100
+  Summary notes: SWEENLAB SCRIPTS banner and links; saved and verified
   PVE default startup order/delays; deletion protection off
   Passed devices use guest UID/GID 0 and mode 0660
 
@@ -172,12 +186,12 @@ PLAN
 configure() {
     ctid=$(pvesh get /cluster/nextid)
     hostname='' tags='' bridge='' ipmode='' ip='' gateway='' ip6mode='' ip6='' gateway6=''
-    vlan='' mtu=1500 mac='' rate='' dns='' search='' cores=2 memory=1024 disk=10 root_store=''
+    vlan='' mtu=1500 mac='' rate='' dns='' search='' cores=2 memory=1024 swap='' disk=10 root_store=''
     tz=$(host_timezone); unpriv=1 keyfile='' password='' password_confirm='' template_store='' template=''
     selected='' ts_up=1 ts_options=$'ssh\nignore-dns' nesting=1 keyctl=1 fuse=0 tun=1 gpu=0 gpu_selected='' onboot=1
     locale_name=$(host_locale) verbose=0
     docker=0 tailscale=0 packages_display='' gpu_display='' ts_flags_display=''
-    local -a steps=(ctid hostname tags bridge ipmode ip gateway ip6mode ip6 gateway6 cores memory disk root_store tz locale_name unpriv keyfile password password_confirm template_store template selected ts_up ts_options nesting keyctl fuse tun gpu gpu_selected onboot verbose review)
+    local -a steps=(ctid hostname tags bridge ipmode ip gateway ip6mode ip6 gateway6 cores memory swap disk root_store tz locale_name unpriv keyfile password password_confirm template_store template selected ts_up ts_options nesting keyctl fuse tun gpu gpu_selected onboot verbose review)
     local index=0 direction=1 key kind title prompt seed error='' names='' line old_password='' arch
     local -a options=()
     arch=$(dpkg --print-architecture)
@@ -211,6 +225,7 @@ configure() {
             gateway6) title='IPv6 gateway'; prompt='IPv6 gateway; leave blank for none';;
             cores) title='CPU cores'; prompt='Number of CPU cores';;
             memory) title='Memory'; prompt=$'Memory in MiB\n\nQuick conversion:\n  512 MiB = 0.5 GiB    1024 MiB = 1 GiB\n  2048 MiB = 2 GiB     4096 MiB = 4 GiB\n  8192 MiB = 8 GiB    16384 MiB = 16 GiB';;
+            swap) title='Swap'; prompt=$'Swap allowance in MiB (required; no default)\n\nEnter 0 to disable swap.\n512 MiB = 0.5 GiB; 1024 MiB = 1 GiB; 2048 MiB = 2 GiB';;
             disk) title='Root disk'; prompt='Root disk size in GiB';;
             root_store|template_store)
                 kind=select
@@ -250,7 +265,7 @@ configure() {
         esac
         [[ -z "$error" ]] || prompt=$'Please correct: '"$error"$'\n\n'"$prompt"
         case "$key" in
-            ctid|hostname|bridge|ipmode|ip|ip6mode|ip6|cores|memory|disk|root_store|tz|locale_name|password|password_confirm|template_store|template|selected|gpu_selected) title+=" (required)";;
+            ctid|hostname|bridge|ipmode|ip|ip6mode|ip6|cores|memory|swap|disk|root_store|tz|locale_name|password|password_confirm|template_store|template|selected|gpu_selected) title+=" (required)";;
         esac
         ui "$kind" "$title" "$prompt" "$seed" ${options[@]+"${options[@]}"}
         case "$UI_ACTION" in
@@ -284,6 +299,7 @@ configure() {
             gateway6) [[ -z "$gateway6" ]] || validate_address 6 "$gateway6" || error='Invalid IPv6 gateway.';;
             cores) number "$cores" 1 "$(nproc)" || error='Enter a valid core count for this host.';;
             memory) number "$memory" 256 1048576 || error='Memory must be at least 256 MiB.';;
+            swap) [[ $swap == 0 ]] || number "$swap" 1 1048576 || error='Enter swap in whole MiB from 0 to 1048576; 0 disables swap.';;
             disk) number "$disk" 2 1048576 || error='Disk must be at least 2 GiB.';;
             tz) [[ "$tz" != *..* && "$tz" =~ ^[a-zA-Z0-9_+/-]+$ && -f "/usr/share/zoneinfo/$tz" ]] || error='Unknown timezone.';;
             keyfile) [[ -z "$keyfile" || ( -f "$keyfile" && -r "$keyfile" ) ]] || error='SSH key file is unreadable.';;
@@ -370,7 +386,7 @@ execute_plan() {
     local features="nesting=$nesting,fuse=$fuse"
     (( unpriv == 0 )) || features+=",keyctl=$keyctl"
     local -a args=("$CTID" "$template" --ostype debian --arch "$(dpkg --print-architecture)" --hostname "$hostname"
-        --cores "$cores" --cpulimit 0 --cpuunits 100 --memory "$memory" --swap 512 --rootfs "$root_store:$disk"
+        --cores "$cores" --cpulimit 0 --cpuunits 100 --memory "$memory" --swap "$swap" --rootfs "$root_store:$disk"
         --unprivileged "$unpriv" --features "$features" --net0 "$net" --onboot "$onboot" --protection 0
         --description "$(container_notes)")
     [[ -z "$tags" ]] || args+=(--tags "$tags")
@@ -417,6 +433,7 @@ execute_plan() {
     progress OK "Timezone $tz configured"
     progress OK "Debian full upgrade completed"
     for item in ${tools[@]+"${tools[@]}"}; do progress OK "Selected tool installed: $item"; done
+    install_stage "📝 Save and verify Summary notes" save_container_notes
     local login_rc=0
     if (( tailscale && ts_up )); then
         local ssh=false accept_dns=true routes=false
