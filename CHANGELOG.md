@@ -2,6 +2,14 @@
 
 Each user-visible update is recorded here and on the [GitHub Releases page](https://github.com/SweenLab/sweenlab-scripts/releases). Debian wizard tags use `debian-lxc-vX.Y.Z`; older `v1.x` releases belong to the retired maintenance wizard.
 
+## Debian LXC Wizard 0.1.21 — 2026-10-31
+
+- Add a required Swap screen immediately after Memory. It starts blank, accepts whole MiB including 0 to disable swap, preserves entries with Back, and shows the selected allowance in the review and creation command. Remove the fixed 512 MiB setting.
+- Save the branded Summary notes explicitly after guest package setup and verify the exact saved description through the Proxmox API before reporting completion. Keep the initial creation description as well. A failed save or mismatched readback stops completion and preserves the CT for inspection.
+- Update the README, creation guide, notes guide and immutable launcher together.
+
+Validation: Bash syntax, diff checks and all 64 local tests pass. Regression tests cover custom/zero/invalid swap values, Back navigation, notes dropped during creation, final notes save failures and readback mismatches. No live Proxmox provisioning or browser-rendering test was performed for this release.
+
 ## Hawser Agent Setup 0.1.2 — 2026-10-28
 
 - Remove the verbose-output question and always stream installation output, with tokens still redacted.

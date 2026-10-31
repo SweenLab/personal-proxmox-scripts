@@ -52,14 +52,14 @@ Download the [banner](assets/branding/sweenlab-scripts-banner.png) or [crest](as
 
 ## Features
 
-- New containers automatically receive generic SWEENLAB SCRIPTS Summary notes: compact banner and links centered in a 280-pixel-high layout.
+- New containers automatically receive generic SWEENLAB SCRIPTS Summary notes: compact banner and links centered in a 280-pixel-high layout. The wizard saves them again after guest setup and verifies the saved description through Proxmox before reporting completion.
 
 - Consistent orange/green screens, persistent centered grey input boxes, complete Tab/arrow navigation, and an aligned Create/Abort review. Password confirmation always starts blank.
 - Explicit unprivileged or privileged container selection.
 - Name-only Proxmox bridge/storage choices and IPv4/IPv6 configuration; other network settings use background defaults. Runtime Docker/firewall bridges are hidden.
 - Selectable git, curl, wget, Tailscale, Docker Engine/Compose, nano, jq, unzip, ping, OpenSSH and sudo.
 - Orange/green terminal accents, horizontal Yes/No controls, FUSE and GPU defaulting to No, and automatic device UID/GID settings.
-- Mandatory root password, host-derived timezone and locale, 10 GiB initial root disk, memory conversion chart and already-downloaded Debian templates.
+- Mandatory root password, host-derived timezone and locale, 10 GiB initial root disk, memory conversion chart, required swap allowance in MiB (0 disables swap; no default), and already-downloaded Debian templates.
 - Optional automatic Tailscale sign-in with SSH/DNS/route settings and a browser login link.
 - Explicit single-choice bridge, IPv4/IPv6 mode, storage and template selectors; required selections block Next until chosen, then focus moves straight to Next.
 - Correct Proxmox directory creation permissions, private logs, read-only extraction diagnostics.
@@ -73,16 +73,16 @@ Download the [banner](assets/branding/sweenlab-scripts-banner.png) or [crest](as
 Use the copy button on the command block below, then paste it into your **Proxmox node shell as root**:
 
 ```bash
-bash -c "$(curl -fsSL https://raw.githubusercontent.com/SweenLab/sweenlab-scripts/553dbf9c5b1b154aaa228e4d62df96ba683cfef0/scripts/proxmox-debian-lxc-create.sh)"
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/SweenLab/sweenlab-scripts/d9b315243acb699bdfe3c58b623be6f0a9d0bdb2/scripts/proxmox-debian-lxc-create.sh)"
 ```
 
-This command is pinned to version 0.1.20 so it does not depend on a cached main-branch download. This downloads and runs the SweenLab wizard. Back preserves your entries; the final Create action begins provisioning. The guest installer is embedded; no companion file or additional shell script download is required.
+This command is pinned to version 0.1.21 so it does not depend on a cached main-branch download. This downloads and runs the SweenLab wizard. Back preserves your entries; the final Create action begins provisioning. The guest installer is embedded; no companion file or additional shell script download is required.
 
 For a first test, choose a new disposable container ID. Follow the [step-by-step guide](docs/proxmox-debian-lxc-create.md) for prerequisites, passthrough permissions, retries and testing. You can inspect the script on GitHub before running it.
 
 ## Testing Status
 
-Version 0.1.20 is an initial test build. Bash syntax and simulated workflow checks pass; live Proxmox, Docker, Tailscale and GPU validation is still required. Start with a disposable container.
+Version 0.1.21 is an initial test build. Bash syntax and simulated workflow checks pass; live Proxmox, Docker, Tailscale and GPU validation is still required. Start with a disposable container.
 
 ## Documentation
 

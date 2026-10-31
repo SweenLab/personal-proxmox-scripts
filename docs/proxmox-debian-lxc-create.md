@@ -1,16 +1,16 @@
 # SweenLab Debian LXC Creation Wizard
 
-Version 0.1.20 (initial test build). One self-contained script, fully step by step, with Back navigation and a final Create/Abort review. Live Proxmox testing is still required.
+Version 0.1.21 (initial test build). One self-contained script, fully step by step, with Back navigation and a final Create/Abort review. Live Proxmox testing is still required.
 
 ## Quick Start: copy and paste
 
 Use the copy button in the top-right corner of this block, then paste into your **Proxmox node shell as root**:
 
 ```bash
-bash -c "$(curl -fsSL https://raw.githubusercontent.com/SweenLab/sweenlab-scripts/553dbf9c5b1b154aaa228e4d62df96ba683cfef0/scripts/proxmox-debian-lxc-create.sh)"
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/SweenLab/sweenlab-scripts/d9b315243acb699bdfe3c58b623be6f0a9d0bdb2/scripts/proxmox-debian-lxc-create.sh)"
 ```
 
-The command is pinned to the verified version 0.1.20 script to avoid stale raw GitHub main-branch downloads. No clone, companion file, or additional shell-script download is needed.
+The command is pinned to the verified version 0.1.21 script to avoid stale raw GitHub main-branch downloads. No clone, companion file, or additional shell-script download is needed.
 
 If an older wizard is still open, abort it and restart with this command. Use a new disposable CT ID for the first test. Do not reuse an ID left by a failed creation until its state has been inspected.
 
@@ -42,7 +42,7 @@ The UI centers prompts, fields and choices, with required prompts and choices in
 
 1. **Container details:** unused cluster-wide ID, blank required hostname, and optional tags separated by semicolons. Tags are case-sensitive: `TEST` and `test` are different. Match the exact capitalization of predefined Proxmox tags.
 2. **Networking:** choose an active configured Proxmox Linux bridge. Choices show only names such as `vmbr0` and `vmbr1`; Docker and temporary firewall bridges are hidden. Explicitly select a bridge and each IPv4/IPv6 mode (no mode is preselected; switching to static starts with a blank address field), and addresses/gateways where relevant. Static IPv4 requires an explicit numeric CIDR prefix, for example `10.10.10.204/24`; a bare address, dotted netmask or invalid prefix cannot continue. Prefixes 0–32 are accepted when the address is valid. Untagged networking, MTU 1500, an automatically generated MAC, no rate limit, and inherited host DNS/search settings are applied in the background.
-3. **Resources:** CPU cores, memory in MiB, root disk size in GiB (initially 10), and container storage. Storage uses a single-choice selector showing `( )` and `(x)` markers alongside names. Highlight with arrows, select with Space or Enter to immediately highlight Next, then press Enter to continue. Next is blocked until a choice is explicitly selected; the first row is not automatically selected. Back preserves your accepted selection.
+3. **Resources:** CPU cores, memory in MiB, swap allowance in MiB (required, starts blank; 0 disables swap), root disk size in GiB (initially 10), and container storage. Storage uses a single-choice selector showing `( )` and `(x)` markers alongside names. Highlight with arrows, select with Space or Enter to immediately highlight Next, then press Enter to continue. Next is blocked until a choice is explicitly selected; the first row is not automatically selected. Back preserves your accepted selection.
 4. **Timezone and locale:** The guest locale is prefilled from the host configuration: `/etc/locale.conf`, then `/etc/default/locale`. Supported UTF-8 names are normalized; if no supported setting is found, `C.UTF-8` is used. SSH client locale variables are not used. You can edit the choice; it is generated where needed, written as the guest default and verified before the full upgrade. Timezone is automatically prefilled from the Proxmox host's timezone; edit if needed. If the host timezone cannot be resolved, UTC is shown.
 5. **Access:** unprivileged mode is initially Yes. Choose an optional host SSH public-key file. Enter and confirm a mandatory root console password. Passwords remain hidden and are never logged or included in command arguments. Setting a console password does not enable root password login over SSH.
 6. **Downloaded templates:** explicitly select template storage with the same required single-choice selector, then explicitly select one of the Debian templates already downloaded there. Next is blocked until a template is selected. There is no catalog refresh, separate Debian-release chooser, or automatic template download. If the selected storage has none, Back selects another storage; Abort lets you download a template in Proxmox first.
@@ -77,14 +77,13 @@ These are applied in the background and shown in the overview:
 |---|---|
 | Interface firewall flag | Enabled (`firewall=1`); existing Proxmox firewall enablement/rules still apply |
 | CPU limit / weight | `0` (unlimited) / `100` |
-| Swap | 512 MiB |
 | Package upgrades | Always enabled: refresh APT and full upgrade after locale configuration |
 | Guest locale | Detected from host configuration; fallback `C.UTF-8`; editable |
 | Passed device UID/GID / permissions | `0:0`, `0660` |
 | Startup order / delays | Proxmox defaults |
 | Deletion protection | Off |
 
-No firewall, CPU limit/weight, swap, device group-ID, startup-order/delay, protection, or package-upgrade questions are shown. For GPU applications that run as a non-root user, configure guest group access separately after creation.
+No firewall, CPU limit/weight, device group-ID, startup-order/delay, protection, or package-upgrade questions are shown. For GPU applications that run as a non-root user, configure guest group access separately after creation.
 
 ## Tailscale sign-in and options
 
@@ -112,7 +111,7 @@ tar: /var/lib/lxc/204/rootfs: Cannot open: Permission denied
 
 occurs inside Proxmox's template extraction, before guest setup. The wizard through version 0.1.4 passed its private-file `umask 077` to Proxmox. Proxmox's directory creation respects that mask, producing `0700` CT directories that mapped container root (host UID 100000) cannot traverse. This matches the reported root-owned `0700` directories.
 
-Version 0.1.20 runs Proxmox container commands in a subshell with `umask 022`, while logs and UI files retain their private mask. A regression test reproduces the old `0700` behavior with Perl's `File::Path::make_path` and verifies the corrected `0755` directories, private `0600` log files, and command status preservation. This has not yet been validated by creating a container on a live Proxmox host.
+Version 0.1.21 runs Proxmox container commands in a subshell with `umask 022`, while logs and UI files retain their private mask. A regression test reproduces the old `0700` behavior with Perl's `File::Path::make_path` and verifies the corrected `0755` directories, private `0600` log files, and command status preservation. This has not yet been validated by creating a container on a live Proxmox host.
 
 Choose a fresh unused CT ID for the next test. The wizard validates the ID format and checks that no VM or CT uses it through Proxmox. Leftover directories alone do not block selection or trigger a separate pre-creation rejection; Proxmox handles creation errors. Existing failed directories and disks are left untouched for separate inspection. The read-only mapped-root traversal preflight remains in place.
 
@@ -137,7 +136,7 @@ References: [Debian 13 update-locale](https://manpages.debian.org/trixie/locales
 
 ## Automatic Summary notes
 
-New containers receive the [generic branded notes block](container-notes.md) through the description argument during creation. It contains only the banner and GitHub/Guide/Releases links, centered horizontally and vertically within a 280-pixel-high layout area. The creation review lists this automatic setting. Existing containers and custom notes are not updated. The wizard version is retained in a hidden HTML comment.
+New containers receive the [generic branded notes block](container-notes.md) through the description argument during creation. After guest package setup, a dedicated **Save and verify Summary notes** step writes the complete block again with `pct set --description` and reads the configuration back through the Proxmox API. A failed write or mismatched description stops completion with the container preserved, rather than silently claiming success. It contains only the banner and GitHub/Guide/Releases links, centered horizontally and vertically within a 280-pixel-high layout area. The creation review lists this automatic setting. Existing containers and custom notes are not updated. The wizard version is retained in a hidden HTML comment.
 
 ## Logs, safety, and retry behavior
 
