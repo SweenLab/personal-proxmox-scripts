@@ -2,7 +2,7 @@
 # SweenLab Debian LXC Creation Wizard — MIT
 # https://github.com/SweenLab/sweenlab-scripts
 set -Eeuo pipefail
-SCRIPT_VERSION=0.1.21
+SCRIPT_VERSION=0.1.22
 COMPLETED=()
 CTID='' CREATED=0 LOG='' TMP='' UI_DIR='' UI_ACTION='' UI_VALUE=''
 die() { printf '[ERROR] %s\n' "$*" >&2; exit 1; }
@@ -224,7 +224,7 @@ configure() {
             ip6) title='IPv6 address'; prompt='IPv6 address/prefix';;
             gateway6) title='IPv6 gateway'; prompt='IPv6 gateway; leave blank for none';;
             cores) title='CPU cores'; prompt='Number of CPU cores';;
-            memory) title='Memory'; prompt=$'Memory in MiB\n\nQuick conversion:\n  512 MiB = 0.5 GiB    1024 MiB = 1 GiB\n  2048 MiB = 2 GiB     4096 MiB = 4 GiB\n  8192 MiB = 8 GiB    16384 MiB = 16 GiB';;
+            memory) title='Memory'; prompt=$'Memory in MiB — enter the value below\n\n 1 GiB =  1024     7 GiB =  7168    13 GiB = 13312\n 2 GiB =  2048     8 GiB =  8192    14 GiB = 14336\n 3 GiB =  3072     9 GiB =  9216    15 GiB = 15360\n 4 GiB =  4096    10 GiB = 10240    16 GiB = 16384\n 5 GiB =  5120    11 GiB = 11264\n 6 GiB =  6144    12 GiB = 12288';;
             swap) title='Swap'; prompt=$'Swap allowance in MiB (required; no default)\n\nEnter 0 to disable swap.\n512 MiB = 0.5 GiB; 1024 MiB = 1 GiB; 2048 MiB = 2 GiB';;
             disk) title='Root disk'; prompt='Root disk size in GiB';;
             root_store|template_store)
