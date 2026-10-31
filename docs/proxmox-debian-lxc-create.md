@@ -1,16 +1,16 @@
 # SweenLab Debian LXC Creation Wizard
 
-Version 0.1.25 (initial test build). One self-contained script, fully step by step, with Back navigation and a final Create/Abort review. Live Proxmox testing is still required.
+Version 0.2.0. One self-contained script, fully step by step, with Back navigation and a final Create/Abort review. The user confirmed the preceding v0.1.25 wizard is working on Proxmox; v0.2.0 promotes that behavior without functional changes. Optional feature combinations have not been exhaustively tested on live hosts.
 
 ## Quick Start: copy and paste
 
 Use the copy button in the top-right corner of this block, then paste into your **Proxmox node shell as root**:
 
 ```bash
-bash -c "$(curl -fsSL https://raw.githubusercontent.com/SweenLab/sweenlab-scripts/469662cb37a57c44771e9dfbb6dfcc4b873d144f/scripts/proxmox-debian-lxc-create.sh)"
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/SweenLab/sweenlab-scripts/46a403188d4736416fc8e15bb55ed697d6422e7d/scripts/proxmox-debian-lxc-create.sh)"
 ```
 
-The command is pinned to the verified version 0.1.25 script to avoid stale raw GitHub main-branch downloads. No clone, companion file, or additional shell-script download is needed.
+The command is pinned to the verified version 0.2.0 script to avoid stale raw GitHub main-branch downloads. No clone, companion file, or additional shell-script download is needed.
 
 If an older wizard is still open, abort it and restart with this command. Use a new disposable CT ID for the first test. Do not reuse an ID left by a failed creation until its state has been inspected.
 
@@ -121,7 +121,7 @@ tar: /var/lib/lxc/204/rootfs: Cannot open: Permission denied
 
 occurs inside Proxmox's template extraction, before guest setup. The wizard through version 0.1.4 passed its private-file `umask 077` to Proxmox. Proxmox's directory creation respects that mask, producing `0700` CT directories that mapped container root (host UID 100000) cannot traverse. This matches the reported root-owned `0700` directories.
 
-Version 0.1.25 runs Proxmox container commands in a subshell with `umask 022`, while logs and UI files retain their private mask. A regression test reproduces the old `0700` behavior with Perl's `File::Path::make_path` and verifies the corrected `0755` directories, private `0600` log files, and command status preservation. This has not yet been validated by creating a container on a live Proxmox host.
+Version 0.2.0 runs Proxmox container commands in a subshell with `umask 022`, while logs and UI files retain their private mask. A regression test reproduces the old `0700` behavior with Perl's `File::Path::make_path` and verifies the corrected `0755` directories, private `0600` log files, and command status preservation. The user has since confirmed the wizard is working on Proxmox; the individual permission behavior has not been separately instrumented on that host.
 
 Choose a fresh unused CT ID for the next test. The wizard validates the ID format and checks that no VM or CT uses it through Proxmox. Leftover directories alone do not block selection or trigger a separate pre-creation rejection; Proxmox handles creation errors. Existing failed directories and disks are left untouched for separate inspection. The read-only mapped-root traversal preflight remains in place.
 

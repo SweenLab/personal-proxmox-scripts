@@ -2,6 +2,14 @@
 
 Each user-visible update is recorded here and on the [GitHub Releases page](https://github.com/SweenLab/sweenlab-scripts/releases). Debian wizard tags use `debian-lxc-vX.Y.Z`; older `v1.x` releases belong to the retired maintenance wizard.
 
+## Debian LXC Wizard 0.2.0 — 2026-10-31
+
+- Promote the working v0.1.25 wizard to the v0.2.0 milestone at the user's request, with no functional changes.
+- Include explicit swap selection, saved/verified branded Summary notes, the aligned high-contrast 1–16 GiB memory chart, and TUN selection only with Tailscale.
+- Update script and documentation version labels, testing status, and the immutable launch command; preserve all historical release tags.
+
+Validation: the user confirmed v0.1.25 is working on Proxmox. Bash syntax, diff checks and all 67 local tests pass for v0.2.0. Optional feature combinations have not been exhaustively tested on live hosts; no additional live provisioning run was performed for this version promotion.
+
 ## Debian LXC Wizard 0.1.25 — 2026-10-31
 
 - Show the TUN passthrough screen only when Tailscale is selected. Without Tailscale, TUN is disabled and /dev/net/tun is not passed through. Removing Tailscale on a return to Packages clears TUN as well.
