@@ -60,7 +60,7 @@ Download the [banner](assets/branding/sweenlab-scripts-banner.png) or [crest](as
 - Selectable git, curl, wget, Tailscale, Docker Engine/Compose, nano, jq, unzip, ping, OpenSSH and sudo.
 - Orange/green terminal accents, horizontal Yes/No controls, FUSE and GPU defaulting to No, and automatic device UID/GID settings.
 - Mandatory root password, host-derived timezone and locale, 10 GiB initial root disk, memory conversion chart in 1 GiB increments from 1–16 GiB with grey labels, bold green values and column separators, required swap allowance in MiB (0 disables swap; no default), and already-downloaded Debian templates.
-- Optional automatic Tailscale sign-in with SSH/DNS/route settings and a browser login link.
+- Optional automatic Tailscale sign-in with SSH/DNS/route settings and a browser login link. The TUN screen and passthrough are enabled only when Tailscale is selected.
 - Explicit single-choice bridge, IPv4/IPv6 mode, storage and template selectors; required selections block Next until chosen, then focus moves straight to Next.
 - Correct Proxmox directory creation permissions, private logs, read-only extraction diagnostics.
 - Simplified networking with background defaults and arrow-key navigation between fields, lists and buttons.
@@ -73,16 +73,16 @@ Download the [banner](assets/branding/sweenlab-scripts-banner.png) or [crest](as
 Use the copy button on the command block below, then paste it into your **Proxmox node shell as root**:
 
 ```bash
-bash -c "$(curl -fsSL https://raw.githubusercontent.com/SweenLab/sweenlab-scripts/1fcd63679f99b963d81d79fbb1eecf8de63ad529/scripts/proxmox-debian-lxc-create.sh)"
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/SweenLab/sweenlab-scripts/469662cb37a57c44771e9dfbb6dfcc4b873d144f/scripts/proxmox-debian-lxc-create.sh)"
 ```
 
-This command is pinned to version 0.1.24 so it does not depend on a cached main-branch download. This downloads and runs the SweenLab wizard. Back preserves your entries; the final Create action begins provisioning. The guest installer is embedded; no companion file or additional shell script download is required.
+This command is pinned to version 0.1.25 so it does not depend on a cached main-branch download. This downloads and runs the SweenLab wizard. Back preserves your entries; the final Create action begins provisioning. The guest installer is embedded; no companion file or additional shell script download is required.
 
 For a first test, choose a new disposable container ID. Follow the [step-by-step guide](docs/proxmox-debian-lxc-create.md) for prerequisites, passthrough permissions, retries and testing. You can inspect the script on GitHub before running it.
 
 ## Testing Status
 
-Version 0.1.24 is an initial test build. Bash syntax and simulated workflow checks pass; live Proxmox, Docker, Tailscale and GPU validation is still required. Start with a disposable container.
+Version 0.1.25 is an initial test build. Bash syntax and simulated workflow checks pass; live Proxmox, Docker, Tailscale and GPU validation is still required. Start with a disposable container.
 
 ## Documentation
 

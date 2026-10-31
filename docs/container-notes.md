@@ -3,7 +3,7 @@
 The Debian LXC wizard automatically adds this generic block when creating a new container, saves it again after guest package setup, and verifies the saved description through the Proxmox API before reporting completion. It contains only the compact banner and repository links. Existing containers are left unchanged; to update one manually, open Summary → Edit notes and replace its note with the block below.
 
 ```html
-<!-- Created by Sweenlab wizard 0.1.24 -->
+<!-- Created by Sweenlab wizard 0.1.25 -->
 <table width="100%" height="280">
 <thead><tr><td align="center" valign="middle">
 <img src="https://raw.githubusercontent.com/SweenLab/sweenlab-scripts/431677614bb80d7795f9e37ac7791b4a56f7900b/assets/branding/sweenlab-scripts-notes.png" alt="SWEENLAB SCRIPTS" width="280" height="112">

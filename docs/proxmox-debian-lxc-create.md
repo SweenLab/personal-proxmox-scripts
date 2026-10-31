@@ -1,16 +1,16 @@
 # SweenLab Debian LXC Creation Wizard
 
-Version 0.1.24 (initial test build). One self-contained script, fully step by step, with Back navigation and a final Create/Abort review. Live Proxmox testing is still required.
+Version 0.1.25 (initial test build). One self-contained script, fully step by step, with Back navigation and a final Create/Abort review. Live Proxmox testing is still required.
 
 ## Quick Start: copy and paste
 
 Use the copy button in the top-right corner of this block, then paste into your **Proxmox node shell as root**:
 
 ```bash
-bash -c "$(curl -fsSL https://raw.githubusercontent.com/SweenLab/sweenlab-scripts/1fcd63679f99b963d81d79fbb1eecf8de63ad529/scripts/proxmox-debian-lxc-create.sh)"
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/SweenLab/sweenlab-scripts/469662cb37a57c44771e9dfbb6dfcc4b873d144f/scripts/proxmox-debian-lxc-create.sh)"
 ```
 
-The command is pinned to the verified version 0.1.24 script to avoid stale raw GitHub main-branch downloads. No clone, companion file, or additional shell-script download is needed.
+The command is pinned to the verified version 0.1.25 script to avoid stale raw GitHub main-branch downloads. No clone, companion file, or additional shell-script download is needed.
 
 If an older wizard is still open, abort it and restart with this command. Use a new disposable CT ID for the first test. Do not reuse an ID left by a failed creation until its state has been inspected.
 
@@ -48,7 +48,7 @@ The UI centers prompts, fields and choices, with required prompts and choices in
 6. **Downloaded templates:** explicitly select template storage with the same required single-choice selector, then explicitly select one of the Debian templates already downloaded there. Next is blocked until a template is selected. There is no catalog refresh, separate Debian-release chooser, or automatic template download. If the selected storage has none, Back selects another storage; Abort lets you download a template in Proxmox first.
 7. **Packages:** git, curl, wget, Tailscale, Docker Engine/Buildx, Docker Compose (includes Engine), nano, jq, unzip, ping, OpenSSH server, sudo, and Python 3 (with pip and venv). Packages are initially unselected. You must choose at least one package or explicitly select **None**. None clears and excludes individual packages until deselected. Select all / clear all toggles every package and clears None. Selecting all immediately focuses Next; individual package toggles and Clear all keep focus in the list. Use Up from Next to return to the list; Clear all alone cannot continue. None still installs the base locale/timezone support and runs the full upgrade. htop, vim-tiny, tmux, rsync, and dnsutils are no longer choices.
 8. **Tailscale:** when selected, choose whether to start sign-in automatically and configure its options (details below).
-9. **Features:** nesting, keyctl for unprivileged containers, FUSE, and TUN use horizontal Yes/No controls. Nesting, keyctl and TUN start at Yes; FUSE starts at No because most installs do not need it and it can complicate freezing/backups. Docker requires nesting and keyctl in unprivileged mode; Tailscale requires TUN. Invalid combinations cannot continue.
+9. **Features:** nesting, keyctl for unprivileged containers, FUSE, and TUN use horizontal Yes/No controls. The TUN screen appears only when Tailscale is selected and starts at Yes; without Tailscale, TUN is off and no device is passed through. Returning to Packages and removing Tailscale also clears TUN. Nesting and keyctl start at Yes; FUSE starts at No because most installs do not need it and it can complicate freezing/backups. Docker requires nesting and keyctl in unprivileged mode; Tailscale requires TUN. Invalid combinations cannot continue.
 10. **GPU:** shown only when GPU nodes exist. Passthrough starts at No. Choose Yes to select individual devices; at least one device must be selected before continuing, or use Back to disable passthrough. There is no arbitrary additional-character-device question or numeric guest-group prompt.
 11. **Start at host boot:** Yes is initially selected. Startup order and delays use Proxmox defaults.
 12. **Installation output:** verbose output starts at No. Quiet mode shows concise stage progress and keeps full output in the private log; failures show the last 30 lines. Yes streams the full installation output and ends with a checklist of successfully completed stages and selected tools. In-progress stages have no `[..]` marker; only successful work gets a check. Incomplete Tailscale sign-in stays a warning.
@@ -121,7 +121,7 @@ tar: /var/lib/lxc/204/rootfs: Cannot open: Permission denied
 
 occurs inside Proxmox's template extraction, before guest setup. The wizard through version 0.1.4 passed its private-file `umask 077` to Proxmox. Proxmox's directory creation respects that mask, producing `0700` CT directories that mapped container root (host UID 100000) cannot traverse. This matches the reported root-owned `0700` directories.
 
-Version 0.1.24 runs Proxmox container commands in a subshell with `umask 022`, while logs and UI files retain their private mask. A regression test reproduces the old `0700` behavior with Perl's `File::Path::make_path` and verifies the corrected `0755` directories, private `0600` log files, and command status preservation. This has not yet been validated by creating a container on a live Proxmox host.
+Version 0.1.25 runs Proxmox container commands in a subshell with `umask 022`, while logs and UI files retain their private mask. A regression test reproduces the old `0700` behavior with Perl's `File::Path::make_path` and verifies the corrected `0755` directories, private `0600` log files, and command status preservation. This has not yet been validated by creating a container on a live Proxmox host.
 
 Choose a fresh unused CT ID for the next test. The wizard validates the ID format and checks that no VM or CT uses it through Proxmox. Leftover directories alone do not block selection or trigger a separate pre-creation rejection; Proxmox handles creation errors. Existing failed directories and disks are left untouched for separate inspection. The read-only mapped-root traversal preflight remains in place.
 
