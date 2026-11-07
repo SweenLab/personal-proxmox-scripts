@@ -2,6 +2,14 @@
 
 Each user-visible update is recorded here and on the [GitHub Releases page](https://github.com/SweenLab/sweenlab-scripts/releases). Debian wizard tags use `debian-lxc-vX.Y.Z`; older `v1.x` releases belong to the retired maintenance wizard.
 
+## sweenlab Proxmox Cleanup 0.1.1 — 2026-11-06
+
+- Add the short root-level `cleanup.sh` Bash launcher, with a pinned Python download, SHA-256 verification, private temporary file and automatic cleanup of its own download.
+- Preserve inventory by default; `--apply` explicitly enables the existing file selection and typed confirmation flow. Forward target and exclusion options unchanged.
+- Simplify README and guide commands; retain optional persistent installation instructions. Cleanup eligibility and protected resources are unchanged.
+
+Validation: 14 cleanup safety tests, Bash syntax, Python CLI version, and launcher success/checksum-failure smoke checks pass. Published downloads verified during release. No live Proxmox or guest cleanup testing performed.
+
 ## sweenlab Proxmox Cleanup 0.1.0 — 2026-11-06
 
 - Add a new inventory-first cleanup tool for the node, running LXCs and Debian-family VMs with guest-agent access, plus explicit in-guest mode.

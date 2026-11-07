@@ -1,8 +1,24 @@
 # sweenlab | Proxmox cleanup
 
-Version **0.1.0** · inventory first · explicit file allowlist · Debian-family guests
+Version **0.1.1** · inventory first · explicit file allowlist · Debian-family guests
 
 This is a new conservative cleanup tool, not a revival of the retired maintenance wizard. It finds a narrow set of verified disposable files. It does not decide that unknown data is junk.
+
+## Short Bash launcher
+
+Run in the Proxmox root shell. Inventory only:
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/SweenLab/sweenlab-scripts/73de98c22c8ccba5bb5e84313b7946b2063c3b20/cleanup.sh)
+```
+
+Interactive cleanup with exact file selection and typed confirmation:
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/SweenLab/sweenlab-scripts/73de98c22c8ccba5bb5e84313b7946b2063c3b20/cleanup.sh) --apply
+```
+
+The launcher downloads the pinned Python script, verifies SHA-256 and runs it from a private temporary directory. It removes only its own temporary download on exit. Reports remain under `/var/log/sweenlab/cleanup/`. It does not install a persistent script. All Python options can follow the command, including `--targets host,ct:200`. Both commands require Bash, curl, Python 3 and sha256sum. Default remains inventory only. The longer optional installation below is for a persistent local copy.
 
 ## 1. Prepare
 
@@ -27,9 +43,9 @@ The following block downloads the immutable script, verifies its SHA-256, instal
   sweenlab_tmp=$(mktemp -d)
   trap 'rm -f -- "$sweenlab_tmp/cleanup.py"; rmdir -- "$sweenlab_tmp"' EXIT
   curl --proto '=https' --tlsv1.2 -fsSL \
-    https://raw.githubusercontent.com/SweenLab/sweenlab-scripts/7c1300cd0ade6cf011163b255fdd6ad0b6f628d7/scripts/sweenlab-cleanup/sweenlab-cleanup.py \
+    https://raw.githubusercontent.com/SweenLab/sweenlab-scripts/5e0ad4bfdcef7aa0497e7d166104f8a6164e6dab/scripts/sweenlab-cleanup/sweenlab-cleanup.py \
     -o "$sweenlab_tmp/cleanup.py"
-  printf '%s  %s\n' '9d748cf2e82db1d3eb79574f30cd0d36de8fea4d2333b8d925e0d8837f6ce41b' "$sweenlab_tmp/cleanup.py" | sha256sum -c -
+  printf '%s  %s\n' '5d3e5e3ef6e43f8a56c9ee948afba7883abc8fd3b27d4480d539050c0b96c8dd' "$sweenlab_tmp/cleanup.py" | sha256sum -c -
   install -d -m 700 /opt/sweenlab
   install -m 700 "$sweenlab_tmp/cleanup.py" "$sweenlab_script"
   python3 "$sweenlab_script"

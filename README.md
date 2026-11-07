@@ -24,39 +24,23 @@ Have fun!
 
 # Proxmox Cleanup — inventory first
 
-Version **0.1.0**. Inspect the host, running LXCs and supported VMs; clean only an exact file allowlist after interactive selection and typed confirmation. Eligible data is limited to verified old Debian package downloads and archived system journals. VM/LXC disks, volumes, backups, snapshots, mounts, user files and trash have no deletion action.
+Version **0.1.1**. Inspect the host, running LXCs and supported VMs; clean only an exact file allowlist after interactive selection and typed confirmation. Eligible data is limited to verified old Debian package downloads and archived system journals. VM/LXC disks, volumes, backups, snapshots, mounts, user files and trash have no deletion action.
 
-Paste into the **Proxmox root shell** to install a checksum-verified copy and run **inventory only**:
+Run in the **Proxmox root shell**. The short Bash launcher verifies and runs a temporary script; it does not install a persistent copy.
 
-```bash
-(
-  set -euo pipefail
-  [ "$(id -u)" -eq 0 ] || { echo "Run in the Proxmox root shell."; exit 1; }
-  umask 077
-  sweenlab_script=/opt/sweenlab/sweenlab-cleanup.py
-  if [ -e "$sweenlab_script" ] || [ -L "$sweenlab_script" ]; then
-    echo "Already installed. Run: python3 $sweenlab_script"
-    exit 1
-  fi
-  sweenlab_tmp=$(mktemp -d)
-  trap 'rm -f -- "$sweenlab_tmp/cleanup.py"; rmdir -- "$sweenlab_tmp"' EXIT
-  curl --proto '=https' --tlsv1.2 -fsSL \
-    https://raw.githubusercontent.com/SweenLab/sweenlab-scripts/7c1300cd0ade6cf011163b255fdd6ad0b6f628d7/scripts/sweenlab-cleanup/sweenlab-cleanup.py \
-    -o "$sweenlab_tmp/cleanup.py"
-  printf '%s  %s\n' '9d748cf2e82db1d3eb79574f30cd0d36de8fea4d2333b8d925e0d8837f6ce41b' "$sweenlab_tmp/cleanup.py" | sha256sum -c -
-  install -d -m 700 /opt/sweenlab
-  install -m 700 "$sweenlab_tmp/cleanup.py" "$sweenlab_script"
-  python3 "$sweenlab_script"
-)
-```
-
-Then, only when ready to review individual deletions:
+Inventory only:
 
 ```bash
-python3 /opt/sweenlab/sweenlab-cleanup.py --apply --targets host,ct:200
+bash <(curl -fsSL https://raw.githubusercontent.com/SweenLab/sweenlab-scripts/73de98c22c8ccba5bb5e84313b7946b2063c3b20/cleanup.sh)
 ```
 
-Change `ct:200` to your intended container, or select `vm:<id>` for a supported VM. Python 3 is required inside guests; VMs also need a working, enabled QEMU guest agent. No guest is started or mounted. Exclusions, private audit reports, backup/snapshot considerations and in-guest execution are covered in the [step-by-step guide](docs/sweenlab-cleanup.md). [Review the script](scripts/sweenlab-cleanup/sweenlab-cleanup.py).
+Interactive cleanup (select files and type confirmation before deletion):
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/SweenLab/sweenlab-scripts/73de98c22c8ccba5bb5e84313b7946b2063c3b20/cleanup.sh) --apply
+```
+
+Add `--targets host,ct:200` to limit the targets. Change `ct:200` to your intended container, or select `vm:<id>` for a supported VM. Python 3 is required inside guests; VMs also need a working, enabled QEMU guest agent. No guest is started or mounted. Exclusions, private audit reports, backup/snapshot considerations and in-guest execution are covered in the [step-by-step guide](docs/sweenlab-cleanup.md). [Review the script](scripts/sweenlab-cleanup/sweenlab-cleanup.py).
 
 Validation: 14 mocked safety tests, Python compilation and help/version checks pass. **Live Proxmox/guest cleanup remains unverified.**
 
