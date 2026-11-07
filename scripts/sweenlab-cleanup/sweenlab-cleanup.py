@@ -14,7 +14,7 @@ import sys
 import time
 
 # Executed unchanged on the host, or through pct/qm inside a running guest.
-SCRIPT_VERSION = "0.2.0"
+SCRIPT_VERSION = "1.1.0"
 
 WORKER = r'''
 import base64, fcntl, hashlib, json, os, re, stat, subprocess, sys, time
@@ -514,8 +514,8 @@ def review_files(ui, target, items):
     seed = ''
     while True:
         action, value = ui.ask('check', 'Select files | '+target,
-            'No files are preselected. Space toggles a file. Next reviews the full paths. Leave all unchecked to skip this target.', seed,
-            [(str(i), f"{x['action']} | {x['fingerprint'][2]:,} bytes | "+json.dumps(x['path'])) for i,x in enumerate(items,1)])
+            'No files are preselected. Space toggles a file or Select all / clear all. Next reviews full paths. Leave all unchecked to skip.', seed,
+            [('__all__', 'Select all / clear all')] + [(str(i), f"{x['action']} | {x['fingerprint'][2]:,} bytes | "+json.dumps(x['path'])) for i,x in enumerate(items,1)])
         if action == 'back': return []
         seed = value
         if not value: return []

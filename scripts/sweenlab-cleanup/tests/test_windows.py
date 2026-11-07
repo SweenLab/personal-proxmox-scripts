@@ -64,6 +64,22 @@ class Windows(unittest.TestCase):
     def test_space_selects_exact_file(self):
         result,_=self.drive('check',[curses.KEY_DOWN,' ','\n'],options=[('1','a'),('2','b')])
         self.assertEqual(result,('next','2'))
+    def test_select_all_returns_only_real_file_tags(self):
+        result,drawn=self.drive('check',[' ','\n'],options=[('__all__','Select all / clear all'),('1','a'),('2','b')])
+        self.assertEqual(result,('next','1\n2'))
+        self.assertIn('Select all / clear all',drawn)
+    def test_select_all_then_clear_all(self):
+        result,_=self.drive('check',[' ',curses.KEY_UP,' ','\n'],options=[('__all__','Select all / clear all'),('1','a'),('2','b')])
+        self.assertEqual(result,('next',''))
+    def test_select_all_fills_partial_selection(self):
+        result,_=self.drive('check',[curses.KEY_UP,curses.KEY_UP,' ','\n'],seed='2',options=[('__all__','Select all / clear all'),('1','a'),('2','b')])
+        self.assertEqual(result,('next','1\n2'))
+    def test_new_checklist_starts_empty(self):
+        ui=FakeUI([('next','')]);self.assertEqual(c.review_files(ui,'host',ITEMS),[])
+        self.assertEqual(ui.calls[0][3],'')
+        self.assertEqual(ui.calls[0][4][0],('__all__','Select all / clear all'))
+    def test_select_all_marker_cannot_become_allowlist(self):
+        with self.assertRaises(RuntimeError): c.review_files(FakeUI([('next','__all__')]),'host',ITEMS)
     def test_escape_aborts(self):
         self.assertEqual(self.drive('input',['\x1b'])[0],('abort',''))
     def test_setup_default_inventory_and_back_preserves_targets(self):
