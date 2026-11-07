@@ -14,7 +14,7 @@ import sys
 import time
 
 # Executed unchanged on the host, or through pct/qm inside a running guest.
-SCRIPT_VERSION = "1.1.1"
+SCRIPT_VERSION = "2.0.0"
 
 WORKER = r'''
 import base64, fcntl, hashlib, json, os, re, stat, subprocess, sys, time
@@ -515,7 +515,7 @@ def review_files(ui, target, items):
     while True:
         action, value = ui.ask('check', 'Select files | '+target,
             'No files are preselected. Space toggles a file or Select all / clear all. Next reviews full paths. Leave all unchecked to skip.', seed,
-            [('__all__', 'Select all / clear all')] + [(str(i), f"{x['action']} | {x['fingerprint'][2]:,} bytes | "+json.dumps(x['path'])) for i,x in enumerate(items,1)])
+            [('__all__', 'Select all / clear all')] + [(str(i), f"{x.get('target', target)} | {x['action']} | {x['fingerprint'][2]:,} bytes | "+json.dumps(x['path'])) for i,x in enumerate(items,1)])
         if action == 'back': return []
         seed = value
         if not value: return []
@@ -524,7 +524,7 @@ def review_files(ui, target, items):
         if any(not tag.isdigit() or not 1<=int(tag)<=len(items) for tag in tags):
             raise RuntimeError('invalid file selection')
         chosen = [items[i-1] for i in sorted(set(map(int,tags)))]
-        paths = '\n'.join(json.dumps(x['path']) for x in chosen)
+        paths = '\n'.join(x.get('target', target)+' | '+json.dumps(x['path']) for x in chosen)
         action,_ = ui.message('Review selected files | '+target,
             f'EXACT FILE ALLOWLIST\n{paths}\nTOTAL\n{len(chosen)} files. Logical bytes are not guaranteed physical savings.\nOnly these reviewed files can be deleted.')
         if action == 'back': continue
@@ -543,6 +543,92 @@ def review_files(ui, target, items):
             'TARGET\n'+target+'\nEXACT FILE ALLOWLIST\n'+paths+
             '\nFINAL ACTION\nDelete files starts deletion after fresh eligibility and fingerprint checks. Back returns to selection. Abort stops the run. Default focus is Back.')
         if action == 'next': return chosen
+
+
+def run_batch(ui, a, targets, report, log):
+    """Inspect every selected target, review once, execute exact per-target plans."""
+    entries=[]; summary=[]; failures=0
+    request={'mode':'scan','days':a.journal_days,'exclude_paths':[os.path.normpath(p) for p in a.exclude_path]}
+    def work(title, callback):
+        return ui.working(title, callback) if ui else callback()
+    try:
+        for number,target in enumerate(targets,1):
+            if target != 'host':
+                kind,ident=target.split(':');tool='pct' if kind=='ct' else 'qm'
+                for suffix in [['config',ident],['listsnapshot',ident]]:
+                    try: log('protected-guest-inventory',target=target,command=[tool]+suffix,output=command([tool]+suffix))
+                    except Exception as ex: log('inventory-error',target=target,error=str(ex))
+            try:
+                result=json.loads(work(f'Inspecting {number}/{len(targets)} | {target}',lambda:worker(target,request)))
+                log('scan',target=target,result=result)
+                if 'error' in result: raise RuntimeError(result['error'])
+                items=result['candidates']
+                entries.extend(dict(item,target=target) for item in items)
+                total=sum(x['fingerprint'][2] for x in items)
+                summary.append(f'{target}: {len(items)} files, {total:,} logical bytes, {len(result["notes"])} notes')
+                summary.extend('  '+target+' | '+str(note) for note in result['notes'])
+                if not ui: print(summary[-1])
+            except Exception as ex:
+                failures+=1
+                summary.append(target+': SKIPPED/FAILED | '+str(ex))
+                log('target-error',target=target,stage='scan',error=str(ex))
+                if not ui: print(summary[-1])
+        overview='SCAN RESULTS\n'+'\n'.join(summary)+'\nTOTAL\n'+str(len(entries))+' eligible files across '+str(len(targets))+' selected targets.\nLogical bytes are not guaranteed physical savings.\nREPORT\n'+str(report)
+        if ui:
+            action,_=ui.message('All systems | scan results',overview)
+            if action=='back':
+                log('declined',stage='batch-review');return 1 if failures else 0
+        else:
+            print(overview)
+        chosen=[]
+        if a.apply and entries:
+            if ui:
+                chosen=review_files(ui,'batch',entries)
+            else:
+                for i,item in enumerate(entries,1):
+                    print(f"{i:4} {item['target']} | {item['action']} | {item['fingerprint'][2]:,} bytes | "+json.dumps(item['path']))
+                selection=input('Exact file numbers, comma-separated (Enter skips all cleanup)> ').strip()
+                if selection:
+                    tags=selection.split(',')
+                    if any(not x.isdigit() or not 1<=int(x)<=len(entries) for x in tags): raise RuntimeError('invalid batch selection; nothing authorized')
+                    chosen=[entries[i-1] for i in sorted(set(map(int,tags)))]
+                    for item in chosen: print('DELETE '+item['target']+' | '+json.dumps(item['path']))
+                    print('Review backups/recovery. Deleted logs cannot be recovered from the audit report.')
+                    if input('Type "delete batch" to authorize this exact cross-system allowlist> ')!='delete batch': chosen=[]
+        plans={}
+        for item in chosen:
+            target=item['target']
+            if target not in targets: raise RuntimeError('invalid target in batch allowlist')
+            plans.setdefault(target,[]).append({k:v for k,v in item.items() if k!='target'})
+        # Persist the complete target/file mapping before executing any deletion.
+        if plans:
+            log('authorized-batch',plans=plans)
+            for target,items in plans.items(): log('authorized',target=target,allowlist=items)
+        results=[]
+        for number,(target,items) in enumerate(plans.items(),1):
+            try:
+                apply_request=dict(request,mode='apply',items=items)
+                output=work(f'Cleaning {number}/{len(plans)} | {target}',lambda:worker(target,apply_request))
+                log('apply-result',target=target,output=output)
+                results.append(target+': completed reviewed cleanup\n'+output)
+            except Exception as ex:
+                failures+=1
+                results.append(target+': FAILED | '+str(ex))
+                log('target-error',target=target,stage='apply',error=str(ex))
+        log('finish',failures=failures,scanned_targets=len(targets),authorized_targets=len(plans),authorized_files=len(chosen))
+        final='RESULTS\n'+('\n'.join(results) if results else 'No cleanup authorized. No files deleted by this run.')+'\nFAILURES / SKIPS\n'+str(failures)+'\nREPORT\n'+str(report)
+        if ui:
+            try: ui.message('All systems | finished',final)
+            except WizardAbort: pass
+        else: print(final)
+        print('\nreport: '+str(report))
+        return 1 if failures else 0
+    except WizardAbort:
+        log('aborted',stage='batch');print('Aborted; inspect audit report for any earlier authorized cleanup: '+str(report));return 0
+    except KeyboardInterrupt:
+        log('interrupted',stage='batch');print('Interrupted; inspect guest execution and report before retrying: '+str(report));return 130
+    except Exception as ex:
+        log('batch-error',error=str(ex));print('Batch stopped: '+str(ex)+'\nreport: '+str(report));return 1
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
@@ -608,71 +694,8 @@ def main():
                 log('wizard-options', options=vars(a), targets=targets)
             except WizardAbort:
                 log('aborted', stage='setup'); print('Aborted. No cleanup started. Report: '+str(report)); return 0
-        failures=0
-        for target in targets:
-            print('\n['+target+']')
-            if target != 'host':
-                kind, ident = target.split(':')
-                tool = 'pct' if kind == 'ct' else 'qm'
-                for suffix in [['config', ident], ['listsnapshot', ident]]:
-                    try: log('protected-guest-inventory',target=target,command=[tool]+suffix,output=command([tool]+suffix))
-                    except Exception as ex: log('inventory-error',target=target,error=str(ex))
-            request={'mode':'scan','days':a.journal_days,'exclude_paths':[os.path.normpath(p) for p in a.exclude_path]}
-            try:
-                raw = ui.working('Inspecting '+target, lambda: worker(target,request)) if ui else worker(target,request)
-                result=json.loads(raw)
-                log('scan',target=target,result=result)
-                if 'error' in result: raise RuntimeError(result['error'])
-                print(result['df'].strip())
-                for note in result['notes']: print('skip: '+note)
-                items=result['candidates']
-                for i,item in enumerate(items,1): print(f"{i:3} {item['action']:7} {item['fingerprint'][2]:12,d} bytes  {item['path']}")
-                print(f'{len(items)} verified candidates; {sum(x["fingerprint"][2] for x in items):,} logical bytes (not a storage savings estimate)')
-                if ui:
-                    ui.message('Inventory | '+target, result['df']+'\nCANDIDATES\n'+str(len(items))+' verified files\n'+('\n'.join(json.dumps(x['path']) for x in items) or 'None')+'\nEXCLUSIONS / NOTES\n'+'\n'.join(result['notes']))
-                if not a.apply or not items: continue
-                if ui:
-                    chosen = review_files(ui, target, items)
-                    if not chosen:
-                        log('declined',target=target); continue
-                    log('authorized',target=target,allowlist=chosen)
-                    request.update(mode='apply',items=chosen)
-                    output=ui.working('Cleaning reviewed files | '+target, lambda: worker(target,request))
-                    log('apply-result',target=target,output=output)
-                    ui.message('Cleanup result | '+target, output)
-                    continue
-                print('Select exact file numbers separated by commas; Enter skips this target.')
-                selection=input('allowlist> ').strip()
-                if not selection: continue
-                indices=selection.split(',')
-                if any(not x.isdigit() or not 1<=int(x)<=len(items) for x in indices): raise RuntimeError('invalid selection; target skipped')
-                chosen=[items[i-1] for i in sorted(set(map(int,indices)))]
-                for item in chosen: print('DELETE '+item['path'])
-                print('Confirm current backups/recovery have been reviewed. Deleted logs cannot be reconstructed from this report.')
-                token='delete '+target
-                if input('Type "'+token+'" to authorize these exact files> ')!=token:
-                    log('declined',target=target); continue
-                log('authorized',target=target,allowlist=chosen)
-                request.update(mode='apply',items=chosen)
-                output=worker(target,request)
-                log('apply-result',target=target,output=output)
-                print(output)
-            except WizardAbort:
-                log('aborted',target=target); print('Aborted; earlier authorized targets may already be cleaned. Report: '+str(report)); return 0
-            except KeyboardInterrupt:
-                log('interrupted',target=target); print('Interrupted; inspect report and guest status before retrying.'); return 130
-            except Exception as ex:
-                failures+=1; log('target-error',target=target,error=str(ex)); print('SKIPPED/FAILED: '+str(ex))
-                if ui:
-                    try: ui.message('Skipped / failed | '+target, str(ex)+'\nInspect report and current guest state before retrying.')
-                    except WizardAbort:
-                        log('aborted',target=target); return 1
-        log('finish',failures=failures)
-        if ui:
-            try: ui.message('Finished', 'REPORT\n'+str(report)+'\nRESULT\n'+str(failures)+' failed/skipped targets. Inventory alone deletes nothing. Earlier authorized cleanup actions are recorded in the report.')
-            except WizardAbort: pass
-        print('\nreport: '+str(report))
-        return 1 if failures else 0
+        return run_batch(ui, a, targets, report, log)
+
 
 if __name__=='__main__':
     sys.exit(main())

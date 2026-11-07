@@ -142,12 +142,12 @@ class Windows(unittest.TestCase):
         self.assertEqual(rc,0);self.assertEqual([x[1]['mode'] for x in calls],['scan'])
         self.assertNotIn('authorized',[x['event'] for x in events])
     def test_full_apply_sends_only_reviewed_allowlist(self):
-        rc,calls,events=self.run_main(self.setup_answers('apply')+[('next','2'),('next',''),('next','reviewed'),('next','delete host'),('next',''),('next',''),('next','')])
+        rc,calls,events=self.run_main(self.setup_answers('apply')+[('next','2'),('next',''),('next','reviewed'),('next','delete batch'),('next',''),('next',''),('next','')])
         self.assertEqual(rc,0);self.assertEqual([x[1]['mode'] for x in calls],['scan','apply'])
         self.assertEqual(calls[1][1]['items'],[ITEMS[1]])
         self.assertEqual([x['allowlist'] for x in events if x['event']=='authorized'],[[ITEMS[1]]])
     def test_full_abort_before_delete_never_calls_apply(self):
-        rc,calls,events=self.run_main(self.setup_answers('apply')+[('next','1'),('next',''),('next','reviewed'),('next','delete host'),c.WizardAbort()])
+        rc,calls,events=self.run_main(self.setup_answers('apply')+[('next','1'),('next',''),('next','reviewed'),('next','delete batch'),c.WizardAbort()])
         self.assertEqual(rc,0);self.assertEqual(len(calls),1)
         self.assertNotIn('authorized',[x['event'] for x in events])
     def test_invalid_selection_fails_closed(self):
