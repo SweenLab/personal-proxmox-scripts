@@ -13,7 +13,7 @@ import sys
 import time
 
 # Executed unchanged on the host, or through pct/qm inside a running guest.
-SCRIPT_VERSION = "0.1.0"
+SCRIPT_VERSION = "0.1.1"
 
 WORKER = r'''
 import base64, fcntl, hashlib, json, os, re, stat, subprocess, sys, time
