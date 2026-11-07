@@ -2,6 +2,16 @@
 
 Each user-visible update is recorded here and on the [GitHub Releases page](https://github.com/SweenLab/sweenlab-scripts/releases). Debian wizard tags use `debian-lxc-vX.Y.Z`; older `v1.x` releases belong to the retired maintenance wizard.
 
+## sweenlab Proxmox Cleanup 2.0.0 — 2026-11-06
+
+- Major workflow update: inspect all selected systems automatically, without an inventory, error or Next dialog per guest. Show one combined scan report.
+- Replace per-guest cleanup selection/confirmation with one consolidated target/file checklist, recovery acknowledgement, exact `delete batch` phrase and final Delete files action defaulting to Back.
+- Bind each approved file to its exact target. Audit the complete batch mapping before any deletion, then execute authorized targets sequentially with existing fresh eligibility/fingerprint checks. Record failures and continue remaining authorized targets without retrying failed commands.
+- Consolidate text-mode scanning/review as well; show one final result report. Preserve exclusions, inventory default, unsupported/stopped/locked guest skipping and all worker-level protections.
+- Update launcher, README and guide; preserve historical releases.
+
+Validation: 45 tests pass, including multiple-system scan completion without per-guest prompts, failure continuation, cross-target file identity, single batch approval, empty selection and abort-before-cleanup. Python compilation, Bash syntax, unchanged worker payload and published downloads verified. No live Proxmox/guest batch cleanup testing performed.
+
 ## sweenlab Proxmox Cleanup 1.1.1 — 2026-11-06
 
 - Fix the missing Select all / clear all row on the Targets screen. Both target and file checklists now include it.

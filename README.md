@@ -24,27 +24,27 @@ Have fun!
 
 # Proxmox Cleanup — inventory first
 
-Version **1.1.1**. Use centered windows matching the LXC creator: orange headings and buttons, green selections, grey input boxes, Back/Next/Abort and keyboard navigation. Choose inventory or reviewed cleanup, targets, exclusions and retention. Clean only an exact file allowlist after interactive selection and typed confirmation. Eligible data is limited to verified old Debian package downloads and archived system journals. VM/LXC disks, volumes, backups, snapshots, mounts, user files and trash have no deletion action.
+Version **2.0.0**. Use centered windows matching the LXC creator: orange headings and buttons, green selections, grey input boxes, Back/Next/Abort and keyboard navigation. Choose inventory or reviewed cleanup, targets, exclusions and retention. The scan runs through all selected systems without per-guest Next prompts, then shows one combined report. Cleanup uses a single consolidated file allowlist and confirmation flow before running through the authorized systems automatically. Clean only an exact file allowlist after interactive selection and typed confirmation. Eligible data is limited to verified old Debian package downloads and archived system journals. VM/LXC disks, volumes, backups, snapshots, mounts, user files and trash have no deletion action.
 
 Run in the **Proxmox root shell**. The short Bash launcher verifies and runs a temporary script; it does not install a persistent copy.
 
 Open the wizard (Inventory only is selected by default):
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/SweenLab/sweenlab-scripts/0402b7ac302aeaabe0586b3c99e08a53a1915f1b/cleanup.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/SweenLab/sweenlab-scripts/c7546ddc4d9a16a70fba897d8a64b7dd50a73b09/cleanup.sh)
 ```
 
 Open the wizard with cleanup review selected (files still require selection, recovery acknowledgement and typed confirmation):
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/SweenLab/sweenlab-scripts/0402b7ac302aeaabe0586b3c99e08a53a1915f1b/cleanup.sh) --apply
+bash <(curl -fsSL https://raw.githubusercontent.com/SweenLab/sweenlab-scripts/c7546ddc4d9a16a70fba897d8a64b7dd50a73b09/cleanup.sh) --apply
 ```
 
 Add `--targets host,ct:200` to limit the targets. Change `ct:200` to your intended container, or select `vm:<id>` for a supported VM. Python 3 is required inside guests; VMs also need a working, enabled QEMU guest agent. No guest is started or mounted. Exclusions, private audit reports, backup/snapshot considerations and in-guest execution are covered in the [step-by-step guide](docs/sweenlab-cleanup.md). [Review the script](scripts/sweenlab-cleanup/sweenlab-cleanup.py).
 
-The window interface needs a terminal at least 80 × 24 and standard-library curses. Use `--no-ui` for the original text interface. No files are preselected. Both the **Targets** and **Select files** checklists start with **Select all / clear all**: press Space to toggle all eligible files for the current target. Full-path review and every confirmation remain required; the final Delete files action defaults to Back.
+The window interface needs a terminal at least 80 × 24 and standard-library curses. Use `--no-ui` for the original text interface. No files are preselected. Both the **Targets** and consolidated **Select files** checklists start with **Select all / clear all**: press Space to toggle all eligible files in the combined checklist. Full-path review and every confirmation remain required; the final Delete files action defaults to Back.
 
-Validation: 38 safety/UI tests, local terminal open/abort, Python compilation and help/version checks pass. **Live Proxmox/guest cleanup remains unverified.**
+Validation: 45 safety/UI tests, local terminal open/abort, Python compilation and help/version checks pass. **Live Proxmox/guest cleanup remains unverified.**
 
 ---
 
