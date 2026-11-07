@@ -2,6 +2,14 @@
 
 Each user-visible update is recorded here and on the [GitHub Releases page](https://github.com/SweenLab/sweenlab-scripts/releases). Debian wizard tags use `debian-lxc-vX.Y.Z`; older `v1.x` releases belong to the retired maintenance wizard.
 
+## sweenlab Proxmox Cleanup 1.1.0 — 2026-11-06
+
+- Add Select all / clear all as the first file-checklist row for each target. Space selects all eligible files, clears a complete selection, or completes a partial selection. Individual file toggles remain available.
+- Keep the initial allowlist empty and preserve full-path review, recovery acknowledgement, exact typed target confirmation and final Delete files action defaulting to Back. No guest-worker deletion rules changed.
+- Set the requested release version to 1.1.0; update launcher checksum, immutable README/guide commands and instructions.
+
+Validation: all 35 cleanup safety/UI tests pass, including select-all, clear-all, partial selection, empty initial selection and rejection of the UI action marker as an allowlist. Bash syntax and Python compilation pass. Published downloads verified during release; no live Proxmox cleanup test performed.
+
 ## sweenlab Proxmox Cleanup 0.2.0 — 2026-11-06
 
 - Add centered interactive windows using the LXC creator's actual renderer, orange/green palette, grey inputs, keyboard controls and Back/Next/Abort navigation.
