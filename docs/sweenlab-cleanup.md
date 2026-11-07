@@ -1,6 +1,6 @@
 # sweenlab | Proxmox cleanup
 
-Version **2.0.0** · inventory first · explicit file allowlist · Debian-family guests
+Version **2.1.0** · inventory first · explicit file allowlist · Debian-family guests
 
 This is a new conservative cleanup tool, not a revival of the retired maintenance wizard. It finds a narrow set of verified disposable files. It does not decide that unknown data is junk.
 
@@ -9,20 +9,20 @@ This is a new conservative cleanup tool, not a revival of the retired maintenanc
 Run in the Proxmox root shell. Open the window wizard with Inventory only selected:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/SweenLab/sweenlab-scripts/c7546ddc4d9a16a70fba897d8a64b7dd50a73b09/cleanup.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/SweenLab/sweenlab-scripts/c04651ea04764e8988089deb9f061fa87c74f12b/cleanup.sh)
 ```
 
 Open the same wizard with cleanup review selected:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/SweenLab/sweenlab-scripts/c7546ddc4d9a16a70fba897d8a64b7dd50a73b09/cleanup.sh) --apply
+bash <(curl -fsSL https://raw.githubusercontent.com/SweenLab/sweenlab-scripts/c04651ea04764e8988089deb9f061fa87c74f12b/cleanup.sh) --apply
 ```
 
 The launcher downloads the pinned Python script, verifies SHA-256 and runs it from a private temporary directory. It removes only its own temporary download on exit. Reports remain under `/var/log/sweenlab/cleanup/`. It does not install a persistent script. All Python options can follow the command, including `--targets host,ct:200`. Both commands require Bash, curl, Python 3 and sha256sum. Default remains inventory only. The longer optional installation below is for a persistent local copy.
 
 ## Window interface and colors
 
-In an interactive terminal, v2.0.0 automatically opens centered bordered windows using the **same embedded renderer and palette as the Debian LXC creator**: orange headings/buttons (208), green selections (114), neutral grey text (252) and dark grey inputs (236), with standard terminal-color fallbacks. `NO_COLOR` requests monochrome; unset it if you want the colors. No extra dialog package is installed.
+In an interactive terminal, v2.1.0 automatically opens centered bordered windows using the **same embedded renderer and palette as the Debian LXC creator**: orange headings/buttons (208), green selections (114), neutral grey text (252) and dark grey inputs (236), with standard terminal-color fallbacks. `NO_COLOR` requests monochrome; unset it if you want the colors. No extra dialog package is installed.
 
 1. **Mode:** Inventory only starts selected. Explicitly choose Review files for cleanup to opt into cleaning; `--apply` merely seeds that choice.
 2. **Targets:** The first row is **Select all / clear all**. Press Space there to toggle all available targets, or toggle host/LXC/VM entries individually. At least one target is required; excluded targets cannot be selected. Names/status metadata are shown when discovery supplies them.
@@ -68,9 +68,9 @@ The following block downloads the immutable script, verifies its SHA-256, instal
   sweenlab_tmp=$(mktemp -d)
   trap 'rm -f -- "$sweenlab_tmp/cleanup.py"; rmdir -- "$sweenlab_tmp"' EXIT
   curl --proto '=https' --tlsv1.2 -fsSL \
-    https://raw.githubusercontent.com/SweenLab/sweenlab-scripts/b6cd8cd5f84e1ac4dc05c1e931f95fd6dd1bda9e/scripts/sweenlab-cleanup/sweenlab-cleanup.py \
+    https://raw.githubusercontent.com/SweenLab/sweenlab-scripts/6d4ee015238e47cbe7335076b9bf69e3093b3599/scripts/sweenlab-cleanup/sweenlab-cleanup.py \
     -o "$sweenlab_tmp/cleanup.py"
-  printf '%s  %s\n' '04841ea270ff7bf7a1c52d9100408b720891cd8c14ade686673dd52d3d7ef0f0' "$sweenlab_tmp/cleanup.py" | sha256sum -c -
+  printf '%s  %s\n' '65422345e241d37a46a84406fadecd5f08876d4e719d39dd1cf3da4c121955a8' "$sweenlab_tmp/cleanup.py" | sha256sum -c -
   install -d -m 700 /opt/sweenlab
   install -m 700 "$sweenlab_tmp/cleanup.py" "$sweenlab_script"
   python3 "$sweenlab_script"
@@ -155,6 +155,19 @@ There are no code paths for deleting VM/LXC disks, unused/unreferenced volumes, 
 
 No package autoremove/purge, kernel removal, Docker/Podman prune, database cleanup, image cleanup, temp-directory sweeping, application cache cleanup, log truncation, filesystem repair, trim, zero-fill, reboot or guest configuration changes are performed. Unknown files remain untouched. If this finds little to remove, inspect application retention rules with the application owner instead of broadening deletion heuristics.
 
+## Space freed at the end
+
+Version 2.1.0 puts a readable space summary at the top of the final results window, followed by per-system details:
+
+- **Total files deleted:** confirmed successful unlinks reported by workers.
+- **Total deleted file bytes:** logical sizes of files actually deleted, not the original scan estimate.
+- **Measured free space change:** bytes free on the target root filesystem immediately after cleanup minus bytes free immediately before cleanup, measured with `statvfs`. Positive means more free space; negative means other activity consumed more than cleanup released. The before/after values and deletion counters are recorded in the audit report.
+- **Per-system details:** the same counters and measurements for each cleaned host/LXC/VM, with partial failures marked explicitly.
+
+The aggregate adds reported changes across target filesystems; it is **not physical Proxmox backend space reclaimed**. Guest filesystems, snapshots, open/deleted files, thin provisioning, delayed release and concurrent writes can make filesystem free-space change differ from deleted file sizes and underlying storage allocation. No trim, sync, snapshot deletion or extra cleanup is triggered to improve the number.
+
+Missing measurements are shown as unavailable, not as zero savings. The total indicates measurement coverage. Failures preserve confirmed partial counts when the worker returns them; transport errors/timeouts can leave incomplete results. Inventory-only runs report zero confirmed deletions and no measured cleanup result. Changes apply to newly launched runs; an already-running older script cannot gain the new report.
+
 ## Troubleshooting and testing
 
 - **APT lock failure:** let the package job finish; never remove lock files. Existing dpkg/frontend/archive POSIX locks are acquired without waiting for both inventory and cleanup.
@@ -164,7 +177,7 @@ No package autoremove/purge, kernel removal, Docker/Podman prune, database clean
 - **Guest timeout:** confirm whether execution is still running before repeating. JSON may include a PID on a timeout; inspect with `qm guest exec-status <id> <pid>` where applicable.
 - **No `finish` event:** treat the report as incomplete. Look for authorization and per-file deletion events; controller errors retain command output where available. A transport/process timeout may prevent complete deletion reporting.
 
-Local verification: Python syntax, command help/version, 45 safety/UI tests including complete mocked inventory/apply/abort flows, exact palette/rendered keyboard checks and a local terminal open/abort smoke check. The guest deletion worker remains unchanged; the v2.0.0 change is the controller workflow. No live Proxmox, LXC, guest-agent or real cleanup validation has been performed. Start with inventory and test any apply operation on a disposable Debian guest before production use.
+Local verification: Python syntax, command help/version, 55 safety/UI tests including complete mocked inventory/apply/abort flows, exact palette/rendered keyboard checks and a local terminal open/abort smoke check. The guest deletion protections remain in place; v2.1.0 adds worker deletion counters and before/after filesystem measurements. No live Proxmox, LXC, guest-agent or real cleanup validation has been performed. Start with inventory and test any apply operation on a disposable Debian guest before production use.
 
 ```bash
 python3 -m unittest discover -s scripts/sweenlab-cleanup/tests -v

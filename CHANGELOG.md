@@ -2,6 +2,15 @@
 
 Each user-visible update is recorded here and on the [GitHub Releases page](https://github.com/SweenLab/sweenlab-scripts/releases). Debian wizard tags use `debian-lxc-vX.Y.Z`; older `v1.x` releases belong to the retired maintenance wizard.
 
+## sweenlab Proxmox Cleanup 2.1.0 — 2026-11-06
+
+- Show confirmed deleted-file counts, logical bytes deleted and measured root-filesystem free-space changes per cleaned system and in total, with totals at the top of the final screen.
+- Measure free bytes immediately before/after cleanup with statvfs and preserve signed changes, raw counters and measurement coverage in audit reports. Do not equate guest/filesystem totals with physical backend recovery.
+- Preserve worker output on command errors to report confirmed partial deletion counters where available; show missing measurements as unavailable. No deletion eligibility or confirmation rules are relaxed.
+- Update launcher checksum, immutable commands, README and guide.
+
+Validation: 55 tests pass, including positive/negative totals, missing measurements, partial counts, malformed output and retained worker-error output. Python compilation, Bash syntax and published downloads verified. No live Proxmox/guest cleanup measurement run performed.
+
 ## sweenlab Proxmox Cleanup 2.0.0 — 2026-11-06
 
 - Major workflow update: inspect all selected systems automatically, without an inventory, error or Next dialog per guest. Show one combined scan report.
