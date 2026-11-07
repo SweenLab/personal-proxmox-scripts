@@ -14,7 +14,7 @@ import sys
 import time
 
 # Executed unchanged on the host, or through pct/qm inside a running guest.
-SCRIPT_VERSION = "2.0.0"
+SCRIPT_VERSION = "2.1.0"
 
 WORKER = r'''
 import base64, fcntl, hashlib, json, os, re, stat, subprocess, sys, time
@@ -74,6 +74,14 @@ def candidates():
         except (OSError,RuntimeError) as ex: notes.append(directory+': '+str(ex))
     if len(result)>300: raise RuntimeError("over 300 candidates; inspect in-guest or narrow scope")
     return result,notes
+removed=[]; deleted_bytes=0; free_before=None
+def free_bytes():
+    fs=os.statvfs('/')
+    return fs.f_bfree * fs.f_frsize
+def cleanup_summary(complete):
+    try: after=free_bytes() if free_before is not None else None
+    except OSError: after=None
+    return {'complete':complete,'removed_count':len(removed),'deleted_bytes':deleted_bytes,'free_before_bytes':free_before,'free_after_bytes':after}
 try:
     if os.geteuid()!=0: raise RuntimeError('root required')
     if not os.path.isfile('/etc/debian_version'): raise RuntimeError('only Debian-family systems supported')
@@ -88,7 +96,7 @@ try:
         print(json.dumps({'candidates':items,'notes':notes,'df':run(['df','-hT','/']),'mounts':run(['findmnt','-rn','-o','TARGET,SOURCE,FSTYPE'])}))
     else:
         current={x['path']:x for x in items}
-        removed=[]
+        free_before=free_bytes()
         for old in req['items']:
             if current.get(old['path'])!=old: raise RuntimeError('candidate changed or no longer eligible: '+old['path'])
         for old in req['items']:
@@ -101,21 +109,27 @@ try:
                     if fingerprint(fd)!=old['fingerprint']: raise RuntimeError('file changed: '+path)
                     s=os.stat(name,dir_fd=dfd,follow_symlinks=False)
                     if (s.st_dev,s.st_ino)!=(old['fingerprint'][0],old['fingerprint'][1]): raise RuntimeError('file replaced')
-                    os.unlink(name,dir_fd=dfd); removed.append(path)
+                    os.unlink(name,dir_fd=dfd); removed.append(path); deleted_bytes+=s.st_size
                     print(json.dumps({'removed':path}),flush=True)
                 finally: os.close(fd)
             finally: os.close(dfd)
-        print(json.dumps({'complete':True,'removed_count':len(removed),'df':run(['df','-hT','/'])}))
+        print(json.dumps(cleanup_summary(True)))
 except Exception as ex:
-    print(json.dumps({'error':str(ex)}),flush=True); sys.exit(1)
+    print(json.dumps(dict(cleanup_summary(False),error=str(ex))),flush=True); sys.exit(1)
 '''
+
+
+class ExecutionError(RuntimeError):
+    def __init__(self, message, output=''):
+        super().__init__(message)
+        self.output = output
 
 
 def command(args, timeout=90):
     p = subprocess.run(args, capture_output=True, text=True, timeout=timeout,
                        env={**os.environ, 'PATH': '/usr/sbin:/usr/bin:/sbin:/bin', 'LC_ALL': 'C'})
     if p.returncode:
-        raise RuntimeError(f'{args[:3]}: {p.stderr} {p.stdout}')
+        raise ExecutionError(f'{args[:3]}: {p.stderr} {p.stdout}', p.stdout)
     return p.stdout
 
 
@@ -139,7 +153,7 @@ def worker(target, request):
         raw = command(['qm', 'guest', 'exec', ident, '--synchronous', '1', '--timeout', '120', '--'] + args, 150)
         response = json.loads(raw)
         if not response.get('exited') or response.get('exitcode') != 0 or response.get('out-truncated') or response.get('err-truncated'):
-            raise RuntimeError('guest execution incomplete/failed/truncated; inspect manually: '+raw)
+            raise ExecutionError('guest execution incomplete/failed/truncated; inspect manually: '+raw, response.get('out-data','') if response.get('exited') and not response.get('out-truncated') else '')
         return response.get('out-data', '')
     return command(args, 150)
 
@@ -545,6 +559,43 @@ def review_files(ui, target, items):
         if action == 'next': return chosen
 
 
+
+def human_bytes(value):
+    sign='-' if value<0 else ''
+    amount=abs(value)
+    for unit in ['B','KiB','MiB','GiB','TiB']:
+        if amount<1024 or unit=='TiB':return f'{sign}{amount:.2f} {unit}'
+        amount/=1024
+
+
+def parse_cleanup_summary(output):
+    summaries=[]
+    for line in output.splitlines():
+        record=json.loads(line)
+        if isinstance(record,dict) and 'complete' in record: summaries.append(record)
+    if len(summaries)!=1:raise RuntimeError('cleanup completion summary missing or ambiguous')
+    record=summaries[0]
+    if type(record.get('complete')) is not bool or type(record.get('removed_count')) is not int or record['removed_count']<0:
+        raise RuntimeError('invalid cleanup completion summary')
+    for field in ['deleted_bytes','free_before_bytes','free_after_bytes']:
+        if record.get(field) is not None and (type(record[field]) is not int or record[field]<0):
+            raise RuntimeError('invalid cleanup space measurement')
+    return record
+
+
+def space_report(measurements, planned_targets):
+    lines=[]; count=0; logical=0; delta=0; measured=0; known_bytes=0
+    for target,record in measurements:
+        count+=record['removed_count']
+        size=record.get('deleted_bytes')
+        if size is not None: logical+=size;known_bytes+=1
+        before,after=record.get('free_before_bytes'),record.get('free_after_bytes')
+        change=after-before if before is not None and after is not None else None
+        if change is not None:delta+=change;measured+=1
+        lines.append(target+': '+str(record['removed_count'])+' files deleted; '+(human_bytes(size)+' file bytes' if size is not None else 'file bytes unavailable')+'; '+('free space change '+('+' if change>=0 else '')+human_bytes(change) if change is not None else 'free space change unavailable')+(' (partial)' if not record['complete'] else ''))
+    totals=['TOTAL FILES DELETED',str(count)+' confirmed files', 'TOTAL DELETED FILE BYTES',human_bytes(logical)+(' (incomplete coverage)' if known_bytes<planned_targets else ''), 'MEASURED FREE SPACE CHANGE',('+' if delta>=0 else '')+human_bytes(delta)+f' across {measured}/{planned_targets} target filesystems' if measured else 'Unavailable (no measured cleanup results)', 'MEASUREMENT NOTES','Free space is measured immediately before/after cleanup. Negative changes mean less free space. Other activity, open files and snapshots can affect the result. Summed target filesystem changes do not measure physical backend storage reclaimed. Failed or unreachable systems may have incomplete results.']
+    return '\n'.join(totals+['PER-SYSTEM DETAILS']+lines)
+
 def run_batch(ui, a, targets, report, log):
     """Inspect every selected target, review once, execute exact per-target plans."""
     entries=[]; summary=[]; failures=0
@@ -604,19 +655,29 @@ def run_batch(ui, a, targets, report, log):
         if plans:
             log('authorized-batch',plans=plans)
             for target,items in plans.items(): log('authorized',target=target,allowlist=items)
-        results=[]
+        results=[]; measurements=[]
         for number,(target,items) in enumerate(plans.items(),1):
             try:
                 apply_request=dict(request,mode='apply',items=items)
                 output=work(f'Cleaning {number}/{len(plans)} | {target}',lambda:worker(target,apply_request))
                 log('apply-result',target=target,output=output)
-                results.append(target+': completed reviewed cleanup\n'+output)
+                record=parse_cleanup_summary(output)
+                if not record['complete']: raise ExecutionError('worker reported incomplete cleanup',output)
+                measurements.append((target,record))
+                results.append(target+': completed reviewed cleanup')
             except Exception as ex:
                 failures+=1
                 results.append(target+': FAILED | '+str(ex))
+                try:
+                    partial=parse_cleanup_summary(getattr(ex,'output',''))
+                    partial['complete']=False
+                    measurements.append((target,partial))
+                except Exception: pass
                 log('target-error',target=target,stage='apply',error=str(ex))
         log('finish',failures=failures,scanned_targets=len(targets),authorized_targets=len(plans),authorized_files=len(chosen))
-        final='RESULTS\n'+('\n'.join(results) if results else 'No cleanup authorized. No files deleted by this run.')+'\nFAILURES / SKIPS\n'+str(failures)+'\nREPORT\n'+str(report)
+        space_text=space_report(measurements,len(plans))
+        log('space-summary',measurements=measurements,authorized_targets=len(plans))
+        final=space_text+'\nRESULTS\n'+('\n'.join(results) if results else 'No cleanup authorized. No files deleted by this run.')+'\nFAILURES / SKIPS\n'+str(failures)+'\nREPORT\n'+str(report)
         if ui:
             try: ui.message('All systems | finished',final)
             except WizardAbort: pass
