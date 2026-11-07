@@ -37,6 +37,7 @@ class FakeUI:
         return answer
     def message(self,title,text): return self.ask('review',title,text)
     def working(self,title,callback): return callback()
+    def session(self,callback): return callback()
 
 ITEMS=[{'path':'/var/cache/apt/archives/a.deb','action':'apt','fingerprint':[1,2,300,4,'hash']},
        {'path':'/var/cache/apt/archives/b.deb','action':'apt','fingerprint':[1,3,400,4,'hash2']}]

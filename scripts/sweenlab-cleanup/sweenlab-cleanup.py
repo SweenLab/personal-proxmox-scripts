@@ -2,6 +2,7 @@
 """sweenlab | conservative Proxmox inventory and reviewed cache cleanup."""
 import argparse
 import contextlib
+import io
 import base64
 import datetime as dt
 import hashlib
@@ -14,7 +15,7 @@ import sys
 import time
 
 # Executed unchanged on the host, or through pct/qm inside a running guest.
-SCRIPT_VERSION = "2.1.0"
+SCRIPT_VERSION = "2.1.1"
 
 WORKER = r'''
 import base64, fcntl, hashlib, json, os, re, stat, subprocess, sys, time
@@ -443,8 +444,26 @@ class WizardAbort(Exception):
 
 class WindowUI:
     """The LXC creator's embedded curses renderer; no packages are installed."""
+    def session(self, callback):
+        # Enter the alternate screen once for the entire wizard/batch.
+        # Defer ordinary messages until curses restores the terminal.
+        output = io.StringIO()
+        def continuous(screen):
+            self.screen = screen
+            try:
+                with contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
+                    return callback()
+            finally:
+                self.screen = None
+        try:
+            return curses.wrapper(continuous)
+        finally:
+            if output.getvalue(): print(output.getvalue(), end='')
+
     def ask(self, kind, title, prompt, seed='', options=()):
-        action, value = curses.wrapper(run, kind, 'SweenLab '+SCRIPT_VERSION+' | '+title, prompt, seed, options)
+        arguments = (kind, 'SweenLab '+SCRIPT_VERSION+' | '+title, prompt, seed, options)
+        screen = getattr(self, 'screen', None)
+        action, value = run(screen, *arguments) if screen is not None else curses.wrapper(run, *arguments)
         if action == 'abort':
             raise WizardAbort()
         return action, value
@@ -468,7 +487,8 @@ class WindowUI:
                     screen.addnstr(y, max(1, (w-len(text))//2), text, max(1,w-2), style)
             screen.refresh()
             return callback()
-        return curses.wrapper(display)
+        screen = getattr(self, 'screen', None)
+        return display(screen) if screen is not None else curses.wrapper(display)
 
     def message(self, title, text):
         # Review layout wraps and scrolls the full text rather than clipping it.
@@ -750,12 +770,16 @@ def main():
             targets=[t for t in targets if t in wanted]
         targets=[t for t in targets if t not in a.exclude_target]
         if ui:
-            try:
-                targets = setup_windows(ui, a, targets, labels)
-                log('wizard-options', options=vars(a), targets=targets)
-            except WizardAbort:
-                log('aborted', stage='setup'); print('Aborted. No cleanup started. Report: '+str(report)); return 0
-        return run_batch(ui, a, targets, report, log)
+            def interactive_workflow():
+                try:
+                    selected = setup_windows(ui, a, targets, labels)
+                    log('wizard-options', options=vars(a), targets=selected)
+                except WizardAbort:
+                    log('aborted', stage='setup'); print('Aborted. No cleanup started. Report: '+str(report)); return 0
+                return run_batch(ui, a, selected, report, log)
+            return ui.session(interactive_workflow)
+        return run_batch(None, a, targets, report, log)
+
 
 
 if __name__=='__main__':
