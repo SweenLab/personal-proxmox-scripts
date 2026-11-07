@@ -2,6 +2,14 @@
 
 Each user-visible update is recorded here and on the [GitHub Releases page](https://github.com/SweenLab/sweenlab-scripts/releases). Debian wizard tags use `debian-lxc-vX.Y.Z`; older `v1.x` releases belong to the retired maintenance wizard.
 
+## sweenlab Proxmox Cleanup 2.1.1 — 2026-11-06
+
+- Fix flashing between progress windows and shell output by keeping one curses session open for setup, scanning, cleanup and final results.
+- Reuse the same screen for every dialog/progress update and defer ordinary stdout/stderr messages until terminal restoration. Preserve messages and restore session state on exceptions.
+- Keep cleanup worker, confirmations, exclusions and space measurements unchanged. Update launcher, README and guide.
+
+Validation: 59 tests pass, including an actual local pseudo-terminal check proving one alternate-screen entry/exit across three inspections, deferred messages and exception cleanup. Python compilation, Bash syntax, unchanged worker check and published download verification pass. No live Proxmox/SSH run performed for this patch.
+
 ## sweenlab Proxmox Cleanup 2.1.0 — 2026-11-06
 
 - Show confirmed deleted-file counts, logical bytes deleted and measured root-filesystem free-space changes per cleaned system and in total, with totals at the top of the final screen.
