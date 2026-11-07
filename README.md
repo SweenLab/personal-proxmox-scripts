@@ -22,6 +22,46 @@ Have fun!
 
 ---
 
+# Proxmox Cleanup — inventory first
+
+Version **0.1.0**. Inspect the host, running LXCs and supported VMs; clean only an exact file allowlist after interactive selection and typed confirmation. Eligible data is limited to verified old Debian package downloads and archived system journals. VM/LXC disks, volumes, backups, snapshots, mounts, user files and trash have no deletion action.
+
+Paste into the **Proxmox root shell** to install a checksum-verified copy and run **inventory only**:
+
+```bash
+(
+  set -euo pipefail
+  [ "$(id -u)" -eq 0 ] || { echo "Run in the Proxmox root shell."; exit 1; }
+  umask 077
+  sweenlab_script=/opt/sweenlab/sweenlab-cleanup.py
+  if [ -e "$sweenlab_script" ] || [ -L "$sweenlab_script" ]; then
+    echo "Already installed. Run: python3 $sweenlab_script"
+    exit 1
+  fi
+  sweenlab_tmp=$(mktemp -d)
+  trap 'rm -f -- "$sweenlab_tmp/cleanup.py"; rmdir -- "$sweenlab_tmp"' EXIT
+  curl --proto '=https' --tlsv1.2 -fsSL \
+    https://raw.githubusercontent.com/SweenLab/sweenlab-scripts/7c1300cd0ade6cf011163b255fdd6ad0b6f628d7/scripts/sweenlab-cleanup/sweenlab-cleanup.py \
+    -o "$sweenlab_tmp/cleanup.py"
+  printf '%s  %s\n' '9d748cf2e82db1d3eb79574f30cd0d36de8fea4d2333b8d925e0d8837f6ce41b' "$sweenlab_tmp/cleanup.py" | sha256sum -c -
+  install -d -m 700 /opt/sweenlab
+  install -m 700 "$sweenlab_tmp/cleanup.py" "$sweenlab_script"
+  python3 "$sweenlab_script"
+)
+```
+
+Then, only when ready to review individual deletions:
+
+```bash
+python3 /opt/sweenlab/sweenlab-cleanup.py --apply --targets host,ct:200
+```
+
+Change `ct:200` to your intended container, or select `vm:<id>` for a supported VM. Python 3 is required inside guests; VMs also need a working, enabled QEMU guest agent. No guest is started or mounted. Exclusions, private audit reports, backup/snapshot considerations and in-guest execution are covered in the [step-by-step guide](docs/sweenlab-cleanup.md). [Review the script](scripts/sweenlab-cleanup/sweenlab-cleanup.py).
+
+Validation: 14 mocked safety tests, Python compilation and help/version checks pass. **Live Proxmox/guest cleanup remains unverified.**
+
+---
+
 # Hawser Agent Setup Wizard
 
 Connect Docker LXCs to Dockhand with a guided native-service installer—no Compose file needed. Paste a Dockhand-generated token, or press **F2** to generate one in the wizard. Includes orange/green menus, Back/Abort, automatic verbose installation, checksum verification, backups and a final checklist.

@@ -2,6 +2,16 @@
 
 Each user-visible update is recorded here and on the [GitHub Releases page](https://github.com/SweenLab/sweenlab-scripts/releases). Debian wizard tags use `debian-lxc-vX.Y.Z`; older `v1.x` releases belong to the retired maintenance wizard.
 
+## sweenlab Proxmox Cleanup 0.1.0 — 2026-11-06
+
+- Add a new inventory-first cleanup tool for the node, running LXCs and Debian-family VMs with guest-agent access, plus explicit in-guest mode.
+- Limit cleanup to root-owned verified old .deb downloads and verified archived system journals, with exact file selection, typed target confirmation, revalidation and SHA-256 fingerprints.
+- Exclude symlinks, hard links, mounted/excluded paths and locked/stopped guests; respect APT locks. No deletion paths for disks, volumes, backups, snapshots, user files or trash.
+- Add private JSONL audit reports, exclusions, backup/snapshot guidance and a checksum-verified launch block pinned to script commit `7c1300cd0ade6cf011163b255fdd6ad0b6f628d7`.
+- Preserve existing tools and historical releases; this is a new conservative implementation, not a restoration of the retired maintenance wizard.
+
+Validation: all 14 cleanup safety tests pass; Python compilation and CLI help/version checks pass. Launcher Bash syntax verified. No live Proxmox, LXC, guest-agent or real cleanup run was performed.
+
 ## Debian LXC Wizard 0.2.0 — 2026-10-31
 
 - Promote the working v0.1.25 wizard to the v0.2.0 milestone at the user's request, with no functional changes.
