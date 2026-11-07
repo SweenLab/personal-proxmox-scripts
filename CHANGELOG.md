@@ -2,6 +2,14 @@
 
 Each user-visible update is recorded here and on the [GitHub Releases page](https://github.com/SweenLab/sweenlab-scripts/releases). Debian wizard tags use `debian-lxc-vX.Y.Z`; older `v1.x` releases belong to the retired maintenance wizard.
 
+## sweenlab Proxmox Cleanup 1.1.1 — 2026-11-06
+
+- Fix the missing Select all / clear all row on the Targets screen. Both target and file checklists now include it.
+- Preserve excluded-target restrictions and the requirement to choose at least one target. Bulk target selection never authorizes cleanup or selects deletion candidates.
+- Update version, launcher checksum, README and guide while preserving historical releases.
+
+Validation: 38 safety/UI tests pass, including the actual target options, bulk selection and the empty-target guard. Python compilation, Bash syntax and published download verification pass. No live Proxmox cleanup test performed.
+
 ## sweenlab Proxmox Cleanup 1.1.0 — 2026-11-06
 
 - Add Select all / clear all as the first file-checklist row for each target. Space selects all eligible files, clears a complete selection, or completes a partial selection. Individual file toggles remain available.
