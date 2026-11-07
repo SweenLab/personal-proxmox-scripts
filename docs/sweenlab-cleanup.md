@@ -1,24 +1,47 @@
 # sweenlab | Proxmox cleanup
 
-Version **0.1.1** · inventory first · explicit file allowlist · Debian-family guests
+Version **0.2.0** · inventory first · explicit file allowlist · Debian-family guests
 
 This is a new conservative cleanup tool, not a revival of the retired maintenance wizard. It finds a narrow set of verified disposable files. It does not decide that unknown data is junk.
 
 ## Short Bash launcher
 
-Run in the Proxmox root shell. Inventory only:
+Run in the Proxmox root shell. Open the window wizard with Inventory only selected:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/SweenLab/sweenlab-scripts/73de98c22c8ccba5bb5e84313b7946b2063c3b20/cleanup.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/SweenLab/sweenlab-scripts/c2dc1314d95d1e9708b50fe5bdbf31e179a7206f/cleanup.sh)
 ```
 
-Interactive cleanup with exact file selection and typed confirmation:
+Open the same wizard with cleanup review selected:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/SweenLab/sweenlab-scripts/73de98c22c8ccba5bb5e84313b7946b2063c3b20/cleanup.sh) --apply
+bash <(curl -fsSL https://raw.githubusercontent.com/SweenLab/sweenlab-scripts/c2dc1314d95d1e9708b50fe5bdbf31e179a7206f/cleanup.sh) --apply
 ```
 
 The launcher downloads the pinned Python script, verifies SHA-256 and runs it from a private temporary directory. It removes only its own temporary download on exit. Reports remain under `/var/log/sweenlab/cleanup/`. It does not install a persistent script. All Python options can follow the command, including `--targets host,ct:200`. Both commands require Bash, curl, Python 3 and sha256sum. Default remains inventory only. The longer optional installation below is for a persistent local copy.
+
+## Window interface and colors
+
+In an interactive terminal, v0.2.0 automatically opens centered bordered windows using the **same embedded renderer and palette as the Debian LXC creator**: orange headings/buttons (208), green selections (114), neutral grey text (252) and dark grey inputs (236), with standard terminal-color fallbacks. `NO_COLOR` requests monochrome; unset it if you want the colors. No extra dialog package is installed.
+
+1. **Mode:** Inventory only starts selected. Explicitly choose Review files for cleanup to opt into cleaning; `--apply` merely seeds that choice.
+2. **Targets:** Space toggles host/LXC/VM targets; excluded targets cannot be selected. Names/status metadata are shown when discovery supplies them.
+3. **Protected paths:** Optional absolute exclusions inside every selected system, separated by semicolons. CLI `--exclude-path` remains available for paths containing semicolons.
+4. **Retention:** Enter at least 30 days for archived journal files.
+5. **Review scan:** Review settings and proceed to inspection. Back preserves your values. These steps never authorize deletion.
+6. **Inventory:** Review each target's filesystem, candidate paths and exclusion notes. Long reviews scroll.
+7. **File selection:** Only in cleanup mode; no files are preselected. Space selects exact files. An empty selection skips that target. Review the selected full paths next, since long checkbox labels may be clipped.
+8. **Recovery and confirmation:** Acknowledge your recovery review, type `delete <target>` exactly, then explicitly choose **Delete files**. The final window starts on **Back**, so pressing Enter alone does not delete anything.
+9. **Results:** Read the per-target result and the final audit report location.
+
+Use arrow keys to navigate, Space to select, Tab/Shift+Tab to move between fields and buttons, Enter to activate, and Escape to abort. In scrollable reviews, Up/Down and Page Up/Down scroll; Left/Right chooses buttons. Abort stops future actions; previously completed cleanup is not rolled back. During a running guest command, wait for its result rather than closing the terminal or starting another run.
+
+The terminal must be at least **80 columns × 24 rows**. `--ui` explicitly requires an interactive terminal; `--no-ui` keeps the original text flow. Noninteractive inventory automatically uses text output. `--apply` still requires a terminal. CLI target restrictions and exclusions seed the window settings; review any edits before proceeding.
+
+```bash
+# Text inventory, for captured output or existing workflows:
+python3 /opt/sweenlab/sweenlab-cleanup.py --no-ui
+```
 
 ## 1. Prepare
 
@@ -43,9 +66,9 @@ The following block downloads the immutable script, verifies its SHA-256, instal
   sweenlab_tmp=$(mktemp -d)
   trap 'rm -f -- "$sweenlab_tmp/cleanup.py"; rmdir -- "$sweenlab_tmp"' EXIT
   curl --proto '=https' --tlsv1.2 -fsSL \
-    https://raw.githubusercontent.com/SweenLab/sweenlab-scripts/5e0ad4bfdcef7aa0497e7d166104f8a6164e6dab/scripts/sweenlab-cleanup/sweenlab-cleanup.py \
+    https://raw.githubusercontent.com/SweenLab/sweenlab-scripts/a611ce7694e191a67cae82882dc1ffc96f03c051/scripts/sweenlab-cleanup/sweenlab-cleanup.py \
     -o "$sweenlab_tmp/cleanup.py"
-  printf '%s  %s\n' '5d3e5e3ef6e43f8a56c9ee948afba7883abc8fd3b27d4480d539050c0b96c8dd' "$sweenlab_tmp/cleanup.py" | sha256sum -c -
+  printf '%s  %s\n' '6552e5c930d02f10fa0c87fd2452ef23a02db3ab9b90a42bf544402e3233f845' "$sweenlab_tmp/cleanup.py" | sha256sum -c -
   install -d -m 700 /opt/sweenlab
   install -m 700 "$sweenlab_tmp/cleanup.py" "$sweenlab_script"
   python3 "$sweenlab_script"
@@ -58,7 +81,7 @@ If already installed, use:
 python3 /opt/sweenlab/sweenlab-cleanup.py
 ```
 
-Default behavior inventories the host and attempts every local guest. Stopped/locked/unsupported guests are skipped with a reported error; they are never booted, mounted or modified. The process returns nonzero when any target fails, even when other targets succeed.
+In the default window flow, review mode and target selection before inspection. Inventory starts selected and targets initially include every non-excluded local guest. In text mode, default behavior inventories the host and attempts every local guest. Stopped/locked/unsupported guests are skipped with a reported error; they are never booted, mounted or modified. The process returns nonzero when any target fails, even when other targets succeed.
 
 ## 3. Read the inventory
 
@@ -99,11 +122,13 @@ Paths are absolute, literal paths; no globs. A path exclusion overlapping any pa
 python3 /opt/sweenlab/sweenlab-cleanup.py --apply --targets host,ct:200
 ```
 
+The default window flow is described above. With `--no-ui`, the original text flow remains:
+
 1. Review the fresh inventory for each target.
-2. Enter only the file numbers you authorize, such as `1,3,4`. Press Enter to skip the target.
-3. Review the resulting exact `DELETE` list and confirm your backup/recovery review.
+2. Enter only file numbers you authorize, such as `1,3,4`; Enter skips the target.
+3. Review the resulting exact `DELETE` list and your backup/recovery readiness.
 4. Type the exact target phrase, for example `delete ct:200`.
-5. The script logs this file allowlist before running cleanup and rescans/rechecks eligibility, identity, size, modification time and SHA-256 before unlinking selected files.
+5. The script logs this file allowlist before cleanup and rescans/rechecks eligibility, identity, size, modification time and SHA-256 before unlinking selected files.
 
 There is no unattended `--yes`, wildcard allowlist, or saved plan replay. Cleanup requires a terminal. Changed files fail closed. Failure can occur after some files were removed; inspect the audit report and current state before a fresh review. A timeout/interruption may leave a guest process running: do not immediately retry. File checks reduce races but do not defend against an actively hostile root user, mount changes or concurrent root processes. Guests and their administrators must be trusted.
 
@@ -137,7 +162,7 @@ No package autoremove/purge, kernel removal, Docker/Podman prune, database clean
 - **Guest timeout:** confirm whether execution is still running before repeating. JSON may include a PID on a timeout; inspect with `qm guest exec-status <id> <pid>` where applicable.
 - **No `finish` event:** treat the report as incomplete. Look for authorization and per-file deletion events; controller errors retain command output where available. A transport/process timeout may prevent complete deletion reporting.
 
-Local verification: Python syntax, command help/version and mocked safety tests. No live Proxmox, LXC, guest-agent or real cleanup validation has been performed. Start with inventory and test any apply operation on a disposable Debian guest before production use.
+Local verification: Python syntax, command help/version, 30 safety/UI tests including complete mocked inventory/apply/abort flows, exact palette/rendered keyboard checks and a local terminal open/abort smoke check. The guest deletion worker is unchanged from v0.1.1. No live Proxmox, LXC, guest-agent or real cleanup validation has been performed. Start with inventory and test any apply operation on a disposable Debian guest before production use.
 
 ```bash
 python3 -m unittest discover -s scripts/sweenlab-cleanup/tests -v

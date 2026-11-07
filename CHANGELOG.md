@@ -2,6 +2,16 @@
 
 Each user-visible update is recorded here and on the [GitHub Releases page](https://github.com/SweenLab/sweenlab-scripts/releases). Debian wizard tags use `debian-lxc-vX.Y.Z`; older `v1.x` releases belong to the retired maintenance wizard.
 
+## sweenlab Proxmox Cleanup 0.2.0 — 2026-11-06
+
+- Add centered interactive windows using the LXC creator's actual renderer, orange/green palette, grey inputs, keyboard controls and Back/Next/Abort navigation.
+- Add mode, target, exclusion, retention and scan-review screens, inspection/cleanup wait windows, scrollable inventory and exact-path reviews, per-target results and a final report screen.
+- Start with inventory selected; leave all deletion candidates unchecked. Require recovery acknowledgement, exact typed target confirmation and a final Delete files action whose default focus is Back.
+- Preserve CLI restrictions, text mode via `--no-ui`, noninteractive inventory and all existing guest-worker protections. Close report/lock handles on all controller exits.
+- Update the checksum-verified short launcher, README and step-by-step guide with immutable commands.
+
+Validation: 30 safety/UI tests pass, including full mocked inventory/apply/abort flows, exact renderer palette and final Back default. Python compilation, help/version, Bash syntax and local terminal open/abort checks pass. Guest deletion worker verified unchanged. No live Proxmox or guest cleanup testing performed.
+
 ## sweenlab Proxmox Cleanup 0.1.1 — 2026-11-06
 
 - Add the short root-level `cleanup.sh` Bash launcher, with a pinned Python download, SHA-256 verification, private temporary file and automatic cleanup of its own download.
