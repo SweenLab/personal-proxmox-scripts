@@ -80,6 +80,21 @@ class Windows(unittest.TestCase):
         self.assertEqual(ui.calls[0][4][0],('__all__','Select all / clear all'))
     def test_select_all_marker_cannot_become_allowlist(self):
         with self.assertRaises(RuntimeError): c.review_files(FakeUI([('next','__all__')]),'host',ITEMS)
+    def test_target_screen_includes_select_all(self):
+        a=SimpleNamespace(apply=False,exclude_path=[],journal_days=30)
+        ui=FakeUI([('next','scan'),('next','host'),('next',''),('next','30'),('next','')])
+        self.assertEqual(c.setup_windows(ui,a,['host','ct:200'],{}),['host'])
+        self.assertEqual(ui.calls[1][4][0],('__all__','Select all / clear all'))
+    def test_targets_clear_all_cannot_pass_required_selection(self):
+        options=[('__all__','Select all / clear all'),('host','node'),('ct:200','container')]
+        result,drawn=self.drive('check',[' ','\n',' ','\n'],seed='host\nct:200',options=options,title='Targets (required)')
+        self.assertEqual(result,('next','host\nct:200'))
+        self.assertIn('Select at least one option before continuing.',drawn)
+    def test_target_select_all_only_returns_available_targets(self):
+        options=[('__all__','Select all / clear all'),('host','node'),('ct:200','container')]
+        result,_=self.drive('check',[' ','\n'],options=options,title='Targets (required)')
+        self.assertEqual(result,('next','host\nct:200'))
+        self.assertNotIn('ct:239',result[1])
     def test_escape_aborts(self):
         self.assertEqual(self.drive('input',['\x1b'])[0],('abort',''))
     def test_setup_default_inventory_and_back_preserves_targets(self):

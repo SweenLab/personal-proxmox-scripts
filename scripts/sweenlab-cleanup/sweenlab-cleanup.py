@@ -14,7 +14,7 @@ import sys
 import time
 
 # Executed unchanged on the host, or through pct/qm inside a running guest.
-SCRIPT_VERSION = "1.1.0"
+SCRIPT_VERSION = "1.1.1"
 
 WORKER = r'''
 import base64, fcntl, hashlib, json, os, re, stat, subprocess, sys, time
@@ -477,8 +477,8 @@ def setup_windows(ui, a, targets, labels):
             mode = value
         elif step == 1:
             action, value = ui.ask('check', 'Targets (required)',
-                'Choose which systems to inspect. Space toggles a target. No guest is started or mounted.',
-                '\n'.join(selected), [(t, labels.get(t,t)) for t in targets])
+                'Choose systems to inspect. Space toggles a target or Select all / clear all. No guest is started or mounted.',
+                '\n'.join(selected), [('__all__', 'Select all / clear all')] + [(t, labels.get(t,t)) for t in targets])
             if action == 'next': selected = value.splitlines()
         elif step == 2:
             action, value = ui.ask('input', 'Protected paths',
