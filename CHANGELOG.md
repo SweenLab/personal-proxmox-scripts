@@ -2,6 +2,13 @@
 
 Each user-visible update is recorded here and on the [GitHub Releases page](https://github.com/SweenLab/sweenlab-scripts/releases). Debian wizard tags use `debian-lxc-vX.Y.Z`; older `v1.x` releases belong to the retired maintenance wizard.
 
+## Debian LXC Wizard 0.3.0 — 2026-11-10
+
+- Set the new container’s MTU from the active Linux bridge selected in the wizard. The review shows the value passed to Proxmox. If the bridge MTU is unavailable, use 1500.
+- Add an optional `--mtu` launch argument for networks that require a manually selected MTU.
+
+Bash syntax and all 69 local tests passed, including simulated review and container creation at 1450, 1500 and 9000, fallback behavior, and manual override validation. This release was not tested on a live Proxmox host.
+
 ## sweenlab Proxmox Cleanup 2.1.1 — 2026-11-06
 
 - Fix flashing between progress windows and shell output by keeping one curses session open for setup, scanning, cleanup and final results.

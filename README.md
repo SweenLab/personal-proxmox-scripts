@@ -82,7 +82,7 @@ Download the [banner](assets/branding/sweenlab-scripts-banner.png) or [crest](as
 
 - Consistent orange/green screens, persistent centered grey input boxes, complete Tab/arrow navigation, and an aligned Create/Abort review. Password confirmation always starts blank.
 - Explicit unprivileged or privileged container selection.
-- Name-only Proxmox bridge/storage choices and IPv4/IPv6 configuration; other network settings use background defaults. Runtime Docker/firewall bridges are hidden.
+- Name-only Proxmox bridge/storage choices and IPv4/IPv6 configuration; the container MTU follows the selected bridge by default. Runtime Docker/firewall bridges are hidden.
 - Selectable git, curl, wget, Tailscale, Docker Engine/Compose, nano, jq, unzip, ping, OpenSSH and sudo.
 - Orange/green terminal accents, horizontal Yes/No controls, FUSE and GPU defaulting to No, and automatic device UID/GID settings.
 - Mandatory root password, host-derived timezone and locale, 10 GiB initial root disk, memory conversion chart in 1 GiB increments from 1–16 GiB with grey labels, bold green values and column separators, required swap allowance in MiB (0 disables swap; no default), and already-downloaded Debian templates.
@@ -99,16 +99,18 @@ Download the [banner](assets/branding/sweenlab-scripts-banner.png) or [crest](as
 Use the copy button on the command block below, then paste it into your **Proxmox node shell as root**:
 
 ```bash
-bash -c "$(curl -fsSL https://raw.githubusercontent.com/SweenLab/sweenlab-scripts/46a403188d4736416fc8e15bb55ed697d6422e7d/scripts/proxmox-debian-lxc-create.sh)"
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/SweenLab/sweenlab-scripts/a8e13818c21e4db284ef68304d3f4d879d89c494/scripts/proxmox-debian-lxc-create.sh)"
 ```
 
-This command is pinned to version 0.2.0 so it does not depend on a cached main-branch download. This downloads and runs the SweenLab wizard. Back preserves your entries; the final Create action begins provisioning. The guest installer is embedded; no companion file or additional shell script download is required.
+This command is pinned to version 0.3.0 so it does not depend on a cached main-branch download. This downloads and runs the SweenLab wizard. Back preserves your entries; the final Create action begins provisioning. The guest installer is embedded; no companion file or additional shell script download is required.
+
+The review shows the selected MTU. To override it, append `-- --mtu 1450` to the launch command.
 
 For a first test, choose a new disposable container ID. Follow the [step-by-step guide](docs/proxmox-debian-lxc-create.md) for prerequisites, passthrough permissions, retries and testing. You can inspect the script on GitHub before running it.
 
 ## Testing Status
 
-Version 0.2.0 promotes the wizard the user confirmed is working on Proxmox. Bash syntax and all 67 local tests pass. Optional Docker, Tailscale and GPU combinations have not been exhaustively tested on live hosts.
+Bash syntax and all 69 local tests passed, including simulated review and container creation at 1450, 1500 and 9000, fallback behavior, and manual override validation. This release was not tested on a live Proxmox host.
 
 ## Documentation
 
