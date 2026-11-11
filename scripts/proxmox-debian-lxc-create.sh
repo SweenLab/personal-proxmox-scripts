@@ -2,7 +2,7 @@
 # SweenLab Debian LXC Creation Wizard — MIT
 # https://github.com/SweenLab/sweenlab-scripts
 set -Eeuo pipefail
-SCRIPT_VERSION=0.2.0
+SCRIPT_VERSION=0.3.0
 COMPLETED=()
 CTID='' CREATED=0 LOG='' TMP='' UI_DIR='' UI_ACTION='' UI_VALUE=''
 die() { printf '[ERROR] %s\n' "$*" >&2; exit 1; }
@@ -184,9 +184,10 @@ Tailscale login may require browser authentication after installation.
 PLAN
 }
 configure() {
+    local mtu_override=${1:-}
     ctid=$(pvesh get /cluster/nextid)
     hostname='' tags='' bridge='' ipmode='' ip='' gateway='' ip6mode='' ip6='' gateway6=''
-    vlan='' mtu=1500 mac='' rate='' dns='' search='' cores=2 memory=1024 swap='' disk=10 root_store=''
+    vlan='' mtu='' mac='' rate='' dns='' search='' cores=2 memory=1024 swap='' disk=10 root_store=''
     tz=$(host_timezone); unpriv=1 keyfile='' password='' password_confirm='' template_store='' template=''
     selected='' ts_up=1 ts_options=$'ssh\nignore-dns' nesting=1 keyctl=1 fuse=0 tun=0 gpu=0 gpu_selected='' onboot=1
     locale_name=$(host_locale) verbose=0
@@ -261,7 +262,9 @@ configure() {
                 kind=check; title='GPU devices'; prompt='Select the GPU devices to pass through. Guest UID/GID are 0.'
                 while IFS= read -r line; do [[ -z "$line" ]] || options+=("$line" ''); done <<< "$gpu_names";;
             onboot) kind=yesno; title='Start at host boot'; prompt='Start this container when Proxmox boots? Startup order and delays use Proxmox defaults.';;
-            review) kind=review; title='Review and create'; seed=''; prompt=$(make_plan);;
+            review)
+                mtu=${mtu_override:-$(bridge_mtu "/sys/class/net/$bridge")}
+                kind=review; title='Review and create'; seed=''; prompt=$(make_plan);;
         esac
         [[ -z "$error" ]] || prompt=$'Please correct: '"$error"$'\n\n'"$prompt"
         case "$key" in
@@ -461,7 +464,17 @@ execute_plan() {
     printf 'Enter the container: pct enter %s\n' "$CTID"
 }
 main() {
-    if [[ ${1:-} == --help ]]; then printf 'Self-contained SweenLab wizard %s. Run as root on Proxmox VE.\n' "$SCRIPT_VERSION"; return; fi
+    local mtu_override=''
+    case ${1:-} in
+        --help)
+            printf 'Self-contained SweenLab wizard %s. Run as root on Proxmox VE.\n' "$SCRIPT_VERSION"
+            printf 'Usage: bash installer.sh [--mtu BYTES] (default: selected bridge MTU).\n'
+            return;;
+        --mtu)
+            (( $# == 2 )) && number "$2" 1280 65535 || die 'Use --mtu with a whole number from 1280 to 65535.'
+            mtu_override=$2
+            shift 2;;
+    esac
     (($# == 0)) || die 'Unknown argument.'
     (( EUID == 0 )) || die 'Run on the Proxmox host as root.'
     [[ -d /etc/pve ]] || die 'A Proxmox VE host is required.'
@@ -477,8 +490,17 @@ main() {
     gpu_names=''
     local item
     for item in /dev/dri/card* /dev/dri/renderD*; do [[ ! -c "$item" ]] || gpu_names+="$item"$'\n'; done
-    configure
+    configure "$mtu_override"
     execute_plan
+}
+
+bridge_mtu() {
+    local value
+    if { IFS= read -r value < "$1/mtu"; } 2>/dev/null && number "$value" 68 65535; then
+        printf '%s\n' "$value"
+    else
+        printf '1500\n'
+    fi
 }
 
 configured_linux_bridges() {

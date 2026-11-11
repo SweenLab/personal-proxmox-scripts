@@ -11,21 +11,24 @@ GUARD = 'if [[ -z "${BASH_SOURCE[0]:-}" || "${BASH_SOURCE[0]:-}" == "$0" ]]; the
 
 
 class WorkflowTests(unittest.TestCase):
-    def exercise(self, scenario='normal', execute=False):
+    def exercise(self, scenario='normal', execute=False, bridge_mtu=None, mtu_override=''):
         with tempfile.TemporaryDirectory() as directory:
             d = Path(directory)
-            (d / 'bridge').mkdir()
+            bridge = d / 'net' / 'vmbr0'
+            (bridge / 'bridge').mkdir(parents=True)
+            if bridge_mtu is not None:
+                (bridge / 'mtu').write_text(f'{bridge_mtu}\n')
             (d / 'lxc' / '204').mkdir(parents=True)
             source = SCRIPT.read_text().replace(GUARD, '')
             source = source.replace('/var/lib/lxc/', str(d / 'lxc') + '/')
             source = source.replace('exec > >(tee -a "$LOG") 2>&1', 'exec >>"$LOG" 2>&1')
             source = source.replace('/var/log/sweenlab-debian-lxc', str(d / 'logs'))
-            source = source.replace('"/sys/class/net/$bridge/bridge"', '"' + str(d / 'bridge') + '"')
+            source = source.replace('/sys/class/net/', str(d / 'net') + '/')
             source = source.replace('[[ -c /dev/net/tun ]]', '[[ -c /dev/null ]]')
             source = source.replace('[[ -c "$device" ]]', '[[ -c /dev/null ]]')
             source = source.replace('>/dev/tty 2>/dev/tty', '>"' + str(d / 'auth-output') + '" 2>&1')
             (d / 'wizard.sh').write_text(source)
-            env = dict(os.environ, FIXTURE=str(d), SCENARIO=scenario)
+            env = dict(os.environ, FIXTURE=str(d), SCENARIO=scenario, TEST_MTU_OVERRIDE=mtu_override)
             code = '''source "$FIXTURE/wizard.sh"
 gpu_names=''
 [[ $SCENARIO != gpu-required ]] || gpu_names=/dev/dri/renderD128
@@ -119,12 +122,37 @@ ui() {
             if [[ "$SCENARIO" == back && "$visits_review" == 1 ]]; then UI_ACTION=back; fi;;
     esac
 }
-configure
+configure "$TEST_MTU_OVERRIDE"
 '''
             code += '\nexecute_plan\n' if execute else '\nprintf "CONFIGURED %s %s %s\\n" "$hostname" "$memory" "$tz"\n'
             result = subprocess.run(['bash', '-c', code], env=env, text=True, capture_output=True)
             files = {str(p.relative_to(d)): p.read_text() for p in d.rglob('*') if p.is_file()}
             return result, files
+
+    def test_bridge_mtu_is_reviewed_and_passed_to_proxmox(self):
+        for bridge_mtu, override, expected in (
+            ('1450', '', '1450'),
+            ('1500', '', '1500'),
+            ('9000', '', '9000'),
+            ('invalid', '', '1500'),
+            ('1500', '1400', '1400'),
+        ):
+            with self.subTest(bridge_mtu=bridge_mtu, override=override):
+                result, files = self.exercise(
+                    execute=True, bridge_mtu=bridge_mtu, mtu_override=override
+                )
+                self.assertEqual(result.returncode, 0, files)
+                self.assertIn(f'untagged / {expected}', files['review'])
+                self.assertIn(f'firewall=1,mtu={expected},gw=', files['calls'])
+
+    def test_invalid_mtu_override_is_rejected_before_host_checks(self):
+        for args in (('--mtu',), ('--mtu', 'garbage'), ('--mtu', '1279'),
+                     ('--mtu', '65536'), ('--mtu', '1450', 'extra')):
+            with self.subTest(args=args):
+                result = subprocess.run(['bash', str(SCRIPT), *args],
+                                        capture_output=True, text=True)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('Use --mtu', result.stderr)
 
     def test_back_preserves_values_and_review_can_go_back(self):
         result, files = self.exercise('back')
