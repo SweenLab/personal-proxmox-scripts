@@ -2,6 +2,10 @@
 
 Each user-visible update is recorded here and on the [GitHub Releases page](https://github.com/SweenLab/sweenlab-scripts/releases). Debian wizard tags use `debian-lxc-vX.Y.Z`; older `v1.x` releases belong to the retired maintenance wizard.
 
+## Debian LXC Wizard 0.3.2 — 2026-11-11
+
+- Verify the running container’s MTU on `eth0` and correct any mismatch before Debian package updates. Stop if the selected MTU cannot be verified.
+
 ## Debian LXC Wizard 0.3.1 — 2026-11-11
 
 - Require a container MTU after bridge selection. Validate the entered value and display it before passing it to Proxmox.
