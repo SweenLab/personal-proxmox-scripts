@@ -2,7 +2,7 @@
 # SweenLab Debian LXC Creation Wizard — MIT
 # https://github.com/SweenLab/sweenlab-scripts
 set -Eeuo pipefail
-SCRIPT_VERSION=0.3.0
+SCRIPT_VERSION=0.3.1
 COMPLETED=()
 CTID='' CREATED=0 LOG='' TMP='' UI_DIR='' UI_ACTION='' UI_VALUE=''
 die() { printf '[ERROR] %s\n' "$*" >&2; exit 1; }
@@ -184,15 +184,15 @@ Tailscale login may require browser authentication after installation.
 PLAN
 }
 configure() {
-    local mtu_override=${1:-}
+    local bridge_limit=''
     ctid=$(pvesh get /cluster/nextid)
     hostname='' tags='' bridge='' ipmode='' ip='' gateway='' ip6mode='' ip6='' gateway6=''
-    vlan='' mtu='' mac='' rate='' dns='' search='' cores=2 memory=1024 swap='' disk=10 root_store=''
+    vlan='' mtu=${1:-} mac='' rate='' dns='' search='' cores=2 memory=1024 swap='' disk=10 root_store=''
     tz=$(host_timezone); unpriv=1 keyfile='' password='' password_confirm='' template_store='' template=''
     selected='' ts_up=1 ts_options=$'ssh\nignore-dns' nesting=1 keyctl=1 fuse=0 tun=0 gpu=0 gpu_selected='' onboot=1
     locale_name=$(host_locale) verbose=0
     docker=0 tailscale=0 packages_display='' gpu_display='' ts_flags_display=''
-    local -a steps=(ctid hostname tags bridge ipmode ip gateway ip6mode ip6 gateway6 cores memory swap disk root_store tz locale_name unpriv keyfile password password_confirm template_store template selected ts_up ts_options nesting keyctl fuse tun gpu gpu_selected onboot verbose review)
+    local -a steps=(ctid hostname tags bridge mtu ipmode ip gateway ip6mode ip6 gateway6 cores memory swap disk root_store tz locale_name unpriv keyfile password password_confirm template_store template selected ts_up ts_options nesting keyctl fuse tun gpu gpu_selected onboot verbose review)
     local index=0 direction=1 key kind title prompt seed error='' names='' line old_password='' arch
     local -a options=()
     arch=$(dpkg --print-architecture)
@@ -218,6 +218,10 @@ configure() {
                 names=$(configured_linux_bridges)
                 while IFS= read -r line; do [[ -z "$line" ]] || options+=("$line" ''); done <<< "$names"
                 if ((${#options[@]} == 0)); then kind=notice; prompt='No active configured Proxmox Linux bridge is available. Apply its network configuration, then restart the wizard.'; fi;;
+            mtu)
+                title='Container MTU'; prompt='Enter the container MTU in bytes (1280 to 65535).'
+                bridge_limit=$(bridge_mtu "/sys/class/net/$bridge")
+                [[ -z "$bridge_limit" ]] || prompt+=" Selected bridge MTU: $bridge_limit bytes.";;
             ipmode) kind=select; title='IPv4'; prompt='How should IPv4 be configured?'; options=(dhcp 'DHCP' static 'Static address' manual 'No automatic IPv4');;
             ip) title='IPv4 address'; prompt='IPv4 address/prefix, for example 10.10.10.204/24';;
             gateway) title='IPv4 gateway'; prompt='IPv4 gateway; leave blank for none';;
@@ -263,12 +267,11 @@ configure() {
                 while IFS= read -r line; do [[ -z "$line" ]] || options+=("$line" ''); done <<< "$gpu_names";;
             onboot) kind=yesno; title='Start at host boot'; prompt='Start this container when Proxmox boots? Startup order and delays use Proxmox defaults.';;
             review)
-                mtu=${mtu_override:-$(bridge_mtu "/sys/class/net/$bridge")}
                 kind=review; title='Review and create'; seed=''; prompt=$(make_plan);;
         esac
         [[ -z "$error" ]] || prompt=$'Please correct: '"$error"$'\n\n'"$prompt"
         case "$key" in
-            ctid|hostname|bridge|ipmode|ip|ip6mode|ip6|cores|memory|swap|disk|root_store|tz|locale_name|password|password_confirm|template_store|template|selected|gpu_selected) title+=" (required)";;
+            ctid|hostname|bridge|mtu|ipmode|ip|ip6mode|ip6|cores|memory|swap|disk|root_store|tz|locale_name|password|password_confirm|template_store|template|selected|gpu_selected) title+=" (required)";;
         esac
         ui "$kind" "$title" "$prompt" "$seed" ${options[@]+"${options[@]}"}
         case "$UI_ACTION" in
@@ -293,6 +296,9 @@ configure() {
             hostname) [[ ${#hostname} -le 63 && "$hostname" =~ ^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?$ ]] || error='Hostname is required; use a single valid DNS label.';;
             tags) [[ -z "$tags" || "$tags" =~ ^[a-zA-Z0-9_][a-zA-Z0-9_.+-]*(\;[a-zA-Z0-9_][a-zA-Z0-9_.+-]*)*$ ]] || error='Use valid tags separated by semicolons.';;
             bridge|root_store|template_store|template) contains_line "${!key}" "$names" || error='Choose an item from the list.';;
+            mtu)
+                if ! number "$mtu" 1280 65535; then error='Enter a whole number from 1280 to 65535.'
+                elif [[ -n "$bridge_limit" ]] && (( mtu > bridge_limit )); then error="MTU cannot exceed the selected bridge MTU ($bridge_limit bytes)."; fi;;
             ipmode) [[ $ipmode == dhcp || $ipmode == static || $ipmode == manual ]] || error='Select an IPv4 mode.'; if [[ $ipmode == static && ( $ip == dhcp || $ip == manual ) ]]; then ip=''; fi;;
             ip6mode) [[ $ip6mode == manual || $ip6mode == auto || $ip6mode == dhcp || $ip6mode == static ]] || error='Select an IPv6 mode.'; if [[ $ip6mode == static && ( $ip6 == dhcp || $ip6 == manual || $ip6 == auto ) ]]; then ip6=''; fi;;
             locale_name) [[ $locale_name == C.UTF-8 || $locale_name =~ ^[a-zA-Z]{2,3}_[a-zA-Z]{2}\.UTF-8$ ]] || error='Enter a UTF-8 locale such as en_US.UTF-8.';;
@@ -468,7 +474,7 @@ main() {
     case ${1:-} in
         --help)
             printf 'Self-contained SweenLab wizard %s. Run as root on Proxmox VE.\n' "$SCRIPT_VERSION"
-            printf 'Usage: bash installer.sh [--mtu BYTES] (default: selected bridge MTU).\n'
+            printf 'Usage: bash installer.sh [--mtu BYTES] (--mtu prefills the required MTU step).\n'
             return;;
         --mtu)
             (( $# == 2 )) && number "$2" 1280 65535 || die 'Use --mtu with a whole number from 1280 to 65535.'
@@ -498,8 +504,6 @@ bridge_mtu() {
     local value
     if { IFS= read -r value < "$1/mtu"; } 2>/dev/null && number "$value" 68 65535; then
         printf '%s\n' "$value"
-    else
-        printf '1500\n'
     fi
 }
 
