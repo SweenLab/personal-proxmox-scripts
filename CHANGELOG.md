@@ -2,6 +2,10 @@
 
 Each user-visible update is recorded here and on the [GitHub Releases page](https://github.com/SweenLab/sweenlab-scripts/releases). Debian wizard tags use `debian-lxc-vX.Y.Z`; older `v1.x` releases belong to the retired maintenance wizard.
 
+## Debian LXC Wizard 0.3.4 — 2026-11-11
+
+- Default the container MTU to 1450 bytes. The wizard still lets you edit it and saves the same selected value for Proxmox, Debian network startup, and the live check before APT.
+
 ## Debian LXC Wizard 0.3.3 — 2026-11-11
 
 - Save the selected MTU in a Debian ifupdown hook so it is reapplied when `eth0` comes up after a container restart.

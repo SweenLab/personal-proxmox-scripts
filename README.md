@@ -99,12 +99,12 @@ Download the [banner](assets/branding/sweenlab-scripts-banner.png) or [crest](as
 Use the copy button on the command block below, then paste it into your **Proxmox node shell as root**:
 
 ```bash
-bash -c "$(curl -fsSL https://raw.githubusercontent.com/SweenLab/sweenlab-scripts/31fef582c7c33d6e5825a4982e67103ea8992d5b/scripts/proxmox-debian-lxc-create.sh)"
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/SweenLab/sweenlab-scripts/bab07161db6d405c45a7e8e2a2030242961dfc18/scripts/proxmox-debian-lxc-create.sh)"
 ```
 
-This command is pinned to version 0.3.3 so it does not depend on a cached main-branch download. This downloads and runs the SweenLab wizard. Back preserves your entries; the final Create action begins provisioning. The guest installer is embedded; no companion file or additional shell script download is required.
+This command is pinned to version 0.3.4 so it does not depend on a cached main-branch download. This downloads and runs the SweenLab wizard. Back preserves your entries; the final Create action begins provisioning. The guest installer is embedded; no companion file or additional shell script download is required.
 
-Enter the container MTU after choosing a bridge. The review shows the accepted value. Append `-- --mtu 1450` to prefill the required MTU step. Debian reapplies the selected MTU whenever ifupdown brings up eth0. Before updating Debian, the installer checks the live MTU on `eth0` and corrects it if needed.
+The container MTU defaults to 1450 bytes and can be edited after choosing a bridge. The review shows the accepted value. Append `-- --mtu 1500` to prefill a different value. Debian reapplies the selected MTU whenever ifupdown brings up eth0. Before updating Debian, the installer checks the live MTU on `eth0` and corrects it if needed.
 
 For a first test, choose a new disposable container ID. Follow the [step-by-step guide](docs/proxmox-debian-lxc-create.md) for prerequisites, passthrough permissions, retries and testing. You can inspect the script on GitHub before running it.
 
