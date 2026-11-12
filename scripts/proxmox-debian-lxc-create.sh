@@ -2,7 +2,7 @@
 # SweenLab Debian LXC Creation Wizard — MIT
 # https://github.com/SweenLab/sweenlab-scripts
 set -Eeuo pipefail
-SCRIPT_VERSION=0.3.1
+SCRIPT_VERSION=0.3.2
 COMPLETED=()
 CTID='' CREATED=0 LOG='' TMP='' UI_DIR='' UI_ACTION='' UI_VALUE=''
 die() { printf '[ERROR] %s\n' "$*" >&2; exit 1; }
@@ -369,6 +369,18 @@ install_stage() {
     (( rc == 0 )) || return "$rc"
     progress OK "$label"
 }
+ensure_live_mtu() {
+    local live_mtu
+    live_mtu=$(proxmox_pct exec "$CTID" -- cat /sys/class/net/eth0/mtu) || return $?
+    [[ "$live_mtu" != "$mtu" ]] || return 0
+    printf 'CT %s eth0 came up at MTU %s; applying %s.\n' "$CTID" "$live_mtu" "$mtu"
+    proxmox_pct exec "$CTID" -- ip link set dev eth0 mtu "$mtu" || return $?
+    live_mtu=$(proxmox_pct exec "$CTID" -- cat /sys/class/net/eth0/mtu) || return $?
+    if [[ "$live_mtu" != "$mtu" ]]; then
+        printf 'CT %s eth0 MTU is %s; expected %s.\n' "$CTID" "$live_mtu" "$mtu" >&2
+        return 1
+    fi
+}
 execute_plan() {
     COMPLETED=()
     PROGRESS_COLOR=0
@@ -438,6 +450,8 @@ execute_plan() {
     bash -n "$TMP"; sha256sum "$TMP" >> "$LOG"
     install_stage "🧰 Prepare embedded installer" proxmox_pct push "$CTID" "$TMP" /root/sweenlab-debian-tools.sh --perms 0700
     while IFS= read -r item; do [[ -z "$item" || $item == __none__ ]] || tools+=("$item"); done <<< "$selected"
+    install_stage "🔎 Verify container eth0 MTU is $mtu" ensure_live_mtu ||
+        die "Could not verify MTU $mtu on CT $CTID eth0. Debian updates have not started."
     install_stage "🌐 Configure locale, fully update Debian and install tools" proxmox_pct exec "$CTID" -- env LANG=C.UTF-8 LC_ALL=C.UTF-8 LANGUAGE= bash /root/sweenlab-debian-tools.sh --timezone "$tz" --locale "$locale_name" --upgrade 1 ${tools[@]+"${tools[@]}"}
     progress OK "Locale $locale_name configured and UTF-8 verified"
     progress OK "Timezone $tz configured"
