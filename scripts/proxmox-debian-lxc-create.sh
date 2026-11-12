@@ -2,7 +2,7 @@
 # SweenLab Debian LXC Creation Wizard — MIT
 # https://github.com/SweenLab/sweenlab-scripts
 set -Eeuo pipefail
-SCRIPT_VERSION=0.3.3
+SCRIPT_VERSION=0.3.4
 COMPLETED=()
 CTID='' CREATED=0 LOG='' TMP='' UI_DIR='' UI_ACTION='' UI_VALUE=''
 die() { printf '[ERROR] %s\n' "$*" >&2; exit 1; }
@@ -219,7 +219,7 @@ configure() {
                 while IFS= read -r line; do [[ -z "$line" ]] || options+=("$line" ''); done <<< "$names"
                 if ((${#options[@]} == 0)); then kind=notice; prompt='No active configured Proxmox Linux bridge is available. Apply its network configuration, then restart the wizard.'; fi;;
             mtu)
-                title='Container MTU'; prompt='Enter the container MTU in bytes (1280 to 65535).'
+                title='Container MTU'; prompt='Use the suggested MTU of 1450 bytes or enter a different value (1280 to 65535).'
                 bridge_limit=$(bridge_mtu "/sys/class/net/$bridge")
                 [[ -z "$bridge_limit" ]] || prompt+=" Selected bridge MTU: $bridge_limit bytes.";;
             ipmode) kind=select; title='IPv4'; prompt='How should IPv4 be configured?'; options=(dhcp 'DHCP' static 'Static address' manual 'No automatic IPv4');;
@@ -501,11 +501,11 @@ execute_plan() {
     printf 'Enter the container: pct enter %s\n' "$CTID"
 }
 main() {
-    local mtu_override=''
+    local mtu_override=1450
     case ${1:-} in
         --help)
             printf 'Self-contained SweenLab wizard %s. Run as root on Proxmox VE.\n' "$SCRIPT_VERSION"
-            printf 'Usage: bash installer.sh [--mtu BYTES] (--mtu prefills the required MTU step).\n'
+            printf 'Usage: bash installer.sh [--mtu BYTES] (default MTU: 1450 bytes).\n'
             return;;
         --mtu)
             (( $# == 2 )) && number "$2" 1280 65535 || die 'Use --mtu with a whole number from 1280 to 65535.'
