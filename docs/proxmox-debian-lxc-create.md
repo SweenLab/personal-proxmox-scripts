@@ -1,16 +1,16 @@
 # SweenLab Debian LXC Creation Wizard
 
-Version 0.3.2. One self-contained script, fully step by step, with Back navigation and a final Create/Abort review.
+Version 0.3.3. One self-contained script, fully step by step, with Back navigation and a final Create/Abort review.
 
 ## Quick Start: copy and paste
 
 Use the copy button in the top-right corner of this block, then paste into your **Proxmox node shell as root**:
 
 ```bash
-bash -c "$(curl -fsSL https://raw.githubusercontent.com/SweenLab/sweenlab-scripts/42672865a8b7f64a68e12ecd349a4cc1e6e1aa3b/scripts/proxmox-debian-lxc-create.sh)"
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/SweenLab/sweenlab-scripts/31fef582c7c33d6e5825a4982e67103ea8992d5b/scripts/proxmox-debian-lxc-create.sh)"
 ```
 
-The command is pinned to the version 0.3.2 script to avoid stale raw GitHub main-branch downloads. No clone, companion file, or additional shell-script download is needed.
+The command is pinned to the version 0.3.3 script to avoid stale raw GitHub main-branch downloads. No clone, companion file, or additional shell-script download is needed.
 
 If an older wizard is still open, abort it and restart with this command. Use a new disposable CT ID for the first test. Do not reuse an ID left by a failed creation until its state has been inspected.
 
@@ -41,7 +41,7 @@ The UI centers prompts, fields and choices, with required prompts and choices in
 ## Configuration screens
 
 1. **Container details:** unused cluster-wide ID, blank required hostname, and optional tags separated by semicolons. Tags are case-sensitive: `TEST` and `test` are different. Match the exact capitalization of predefined Proxmox tags.
-2. **Networking:** choose an active configured Proxmox Linux bridge. Choices show only names such as `vmbr0` and `vmbr1`; Docker and temporary firewall bridges are hidden. Explicitly select a bridge and each IPv4/IPv6 mode (no mode is preselected; switching to static starts with a blank address field), and addresses/gateways where relevant. Static IPv4 requires an explicit numeric CIDR prefix, for example `10.10.10.204/24`; a bare address, dotted netmask or invalid prefix cannot continue. Prefixes 0–32 are accepted when the address is valid. Untagged networking, an automatically generated MAC, no rate limit, and inherited host DNS/search settings are applied in the background. Enter the container MTU in bytes after choosing a bridge. The wizard accepts whole numbers from 1280 to 65535, up to the bridge MTU when it can read that value. The review shows the MTU passed to Proxmox. Append `-- --mtu 1450` to prefill the required step. Before updating Debian, the installer checks the live MTU on `eth0` and corrects it if needed.
+2. **Networking:** choose an active configured Proxmox Linux bridge. Choices show only names such as `vmbr0` and `vmbr1`; Docker and temporary firewall bridges are hidden. Explicitly select a bridge and each IPv4/IPv6 mode (no mode is preselected; switching to static starts with a blank address field), and addresses/gateways where relevant. Static IPv4 requires an explicit numeric CIDR prefix, for example `10.10.10.204/24`; a bare address, dotted netmask or invalid prefix cannot continue. Prefixes 0–32 are accepted when the address is valid. Untagged networking, an automatically generated MAC, no rate limit, and inherited host DNS/search settings are applied in the background. Enter the container MTU in bytes after choosing a bridge. The wizard accepts whole numbers from 1280 to 65535, up to the bridge MTU when it can read that value. The review shows the MTU passed to Proxmox. Append `-- --mtu 1450` to prefill the required step. Debian reapplies the selected MTU whenever ifupdown brings up eth0. Before updating Debian, the installer checks the live MTU on `eth0` and corrects it if needed.
 3. **Resources:** CPU cores, memory in MiB, swap allowance in MiB (required, starts blank; 0 disables swap), root disk size in GiB (initially 10), and container storage. Storage uses a single-choice selector showing `( )` and `(x)` markers alongside names. Highlight with arrows, select with Space or Enter to immediately highlight Next, then press Enter to continue. Next is blocked until a choice is explicitly selected; the first row is not automatically selected. Back preserves your accepted selection.
 4. **Timezone and locale:** The guest locale is prefilled from the host configuration: `/etc/locale.conf`, then `/etc/default/locale`. Supported UTF-8 names are normalized; if no supported setting is found, `C.UTF-8` is used. SSH client locale variables are not used. You can edit the choice; it is generated where needed, written as the guest default and verified before the full upgrade. Timezone is automatically prefilled from the Proxmox host's timezone; edit if needed. If the host timezone cannot be resolved, UTC is shown.
 5. **Access:** unprivileged mode is initially Yes. Choose an optional host SSH public-key file. Enter and confirm a mandatory root console password. Passwords remain hidden and are never logged or included in command arguments. Setting a console password does not enable root password login over SSH.
