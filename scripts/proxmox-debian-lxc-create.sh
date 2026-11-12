@@ -2,7 +2,7 @@
 # SweenLab Debian LXC Creation Wizard — MIT
 # https://github.com/SweenLab/sweenlab-scripts
 set -Eeuo pipefail
-SCRIPT_VERSION=0.3.2
+SCRIPT_VERSION=0.3.3
 COMPLETED=()
 CTID='' CREATED=0 LOG='' TMP='' UI_DIR='' UI_ACTION='' UI_VALUE=''
 die() { printf '[ERROR] %s\n' "$*" >&2; exit 1; }
@@ -369,6 +369,22 @@ install_stage() {
     (( rc == 0 )) || return "$rc"
     progress OK "$label"
 }
+persist_guest_mtu() {
+    # Keep the MTU outside /etc/network/interfaces, which Proxmox can regenerate.
+    proxmox_pct exec "$CTID" -- sh -eu -c '
+        test -x /sbin/ifup
+        hook=/etc/network/if-up.d/sweenlab-mtu
+        temp=$(mktemp "${hook}.XXXXXX")
+        trap "rm -f -- \"\$temp\"" EXIT
+        cat > "$temp"
+        chmod 0755 "$temp"
+        mv -f "$temp" "$hook"
+    ' <<EOF
+#!/bin/sh
+[ "\$IFACE" = eth0 ] || exit 0
+exec /sbin/ip link set dev eth0 mtu $mtu
+EOF
+}
 ensure_live_mtu() {
     local live_mtu
     live_mtu=$(proxmox_pct exec "$CTID" -- cat /sys/class/net/eth0/mtu) || return $?
@@ -450,6 +466,7 @@ execute_plan() {
     bash -n "$TMP"; sha256sum "$TMP" >> "$LOG"
     install_stage "🧰 Prepare embedded installer" proxmox_pct push "$CTID" "$TMP" /root/sweenlab-debian-tools.sh --perms 0700
     while IFS= read -r item; do [[ -z "$item" || $item == __none__ ]] || tools+=("$item"); done <<< "$selected"
+    install_stage "🔧 Save container eth0 MTU for future starts" persist_guest_mtu
     install_stage "🔎 Verify container eth0 MTU is $mtu" ensure_live_mtu ||
         die "Could not verify MTU $mtu on CT $CTID eth0. Debian updates have not started."
     install_stage "🌐 Configure locale, fully update Debian and install tools" proxmox_pct exec "$CTID" -- env LANG=C.UTF-8 LC_ALL=C.UTF-8 LANGUAGE= bash /root/sweenlab-debian-tools.sh --timezone "$tz" --locale "$locale_name" --upgrade 1 ${tools[@]+"${tools[@]}"}
